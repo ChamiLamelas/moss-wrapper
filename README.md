@@ -16,7 +16,7 @@ MOSS can be used to detect plagiarism in students' code. [This somewhat humorous
 ## Installation
 
 1. Download `moss` from this repository. 
-2. Set it to be executable. 
+2. Optional: Set it to be executable (if you're on a Unix-based system this will allow you to just do `./moss`). Note, it can also just be run with `python moss` if you're working on Windows. 
 
 ## Usage
 
@@ -360,6 +360,9 @@ This script used to output things somewhat differently. The most important diffe
 * [Matt Russell](https://www.linkedin.com/in/matthew-russell-152a4414/) -- I took the idea of allowing users to specify their own match formatting, submission filtering as functions in a Python file based on what Matt does with `canonicalizers.py` in his [CS 15 autograder](https://gitlab.cs.tufts.edu/mrussell/gradescope-autograder).
 
 ## Changelog
+
+### 3.21.2024
+* Moved from [GitLab](https://gitlab.cs.tufts.edu/slamel01/comp15-moss) to [GitHub](https://github.com/ChamiLamelas/moss-wrapper).
 
 ### 3.12.2024
 * Made log file not hidden for usability.

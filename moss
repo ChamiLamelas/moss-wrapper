@@ -4,13 +4,16 @@
 Script that wraps running MOSS perl script with the file structure created by provide.
 
 It provides a nicer interface to running MOSS by internally building a MOSS command, identifying
-the proper submissions to include from Tufts grading directories, and saves the results.
+the proper submissions to include from Tufts grading directories, and saves the results in
+a more organized manner. Saving the results should not be underrated. It allows one to access
+the results after MOSS expiration or in the (surprisngly common) instance when the MOSS
+results server(s) go down.
 
 This script should have execute permissions.
 
-Version: 3.12.2024
+Version: 3.21.2024
 
-See https://gitlab.cs.tufts.edu/slamel01/comp15-moss for most up to date version and more information.
+See https://github.com/ChamiLamelas/moss-wrapper for the most up to date version and more information.
 
 Author: Chami Lamelas (slamel01)
 Date: Fall 2022 - Present
