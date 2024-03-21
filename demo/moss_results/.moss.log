@@ -1,0 +1,98 @@
+2023-03-14 15:32:34,681 | [INFO] : Constructing moss.pl command ...
+2023-03-14 15:32:34,682 | [INFO] : moss.pl command constructed.
+2023-03-14 15:32:34,682 | [INFO] : Submitting MOSS job...
+2023-03-14 15:32:34,682 | [DEBUG] : 
+
+Running moss.pl -c "demo_assignment: job submitted at 03/14/2023 03:32 PM EST. Estimated expiration time: 03/28/2023 03:32 PM EST" -l cc -n 250 -m 10 -b demo/assignment/starter/file1.h -b demo/assignment/starter/file1.cpp -d demo/assignment/sem1/studentb02.2/file1.h demo/assignment/sem1/studentb02.2/file1.cpp demo/assignment/sem1/studenta01.2/file1.h demo/assignment/sem1/studenta01.2/file1.cpp demo/assignment/sem2/studentc03.3/file1.h demo/assignment/sem2/studentc03.3/file1.cpp demo/assignment/githubs/githubuser1/file1.h demo/assignment/githubs/githubuser1/file1.cpp
+
+
+2023-03-14 15:32:49,440 | [INFO] : Constructing moss.pl command ...
+2023-03-14 15:32:49,441 | [INFO] : moss.pl command constructed.
+2023-03-14 15:32:49,441 | [INFO] : Submitting MOSS job...
+2023-03-14 15:32:49,441 | [DEBUG] : 
+
+Running moss.pl -c "demo_assignment: job submitted at 03/14/2023 03:32 PM EST. Estimated expiration time: 03/28/2023 03:32 PM EST" -l cc -n 250 -m 10 -b demo/assignment/starter/file1.h -b demo/assignment/starter/file1.cpp -d demo/assignment/sem1/studentb02.2/file1.h demo/assignment/sem1/studentb02.2/file1.cpp demo/assignment/sem1/studenta01.2/file1.h demo/assignment/sem1/studenta01.2/file1.cpp demo/assignment/sem2/studentc03.3/file1.h demo/assignment/sem2/studentc03.3/file1.cpp demo/assignment/githubs/githubuser1/file1.h demo/assignment/githubs/githubuser1/file1.cpp
+
+
+Checking files . . . 
+OK
+Uploading demo/assignment/starter/file1.h ...done.
+Uploading demo/assignment/starter/file1.cpp ...done.
+Uploading demo/assignment/sem1/studentb02.2/file1.h ...done.
+Uploading demo/assignment/sem1/studentb02.2/file1.cpp ...done.
+Uploading demo/assignment/sem1/studenta01.2/file1.h ...done.
+Uploading demo/assignment/sem1/studenta01.2/file1.cpp ...done.
+Uploading demo/assignment/sem2/studentc03.3/file1.h ...done.
+Uploading demo/assignment/sem2/studentc03.3/file1.cpp ...done.
+Uploading demo/assignment/githubs/githubuser1/file1.h ...done.
+Uploading demo/assignment/githubs/githubuser1/file1.cpp ...done.
+Query submitted.  Waiting for the server's response.
+http://moss.stanford.edu/results/6/425624063677
+2023-03-14 15:33:10,508 | [DEBUG] : 
+
+MOSS job finished in 21.067031860351562s
+2023-03-14 15:33:10,509 | [INFO] : Success! Results at http://moss.stanford.edu/results/6/425624063677
+2023-03-14 15:33:10,509 | [DEBUG] : Estimated expiration time: 03/28/2023 03:32 PM EST
+2023-03-14 15:33:10,509 | [DEBUG] : 
+
+Running wget -P demo/moss_results/demo_assignment_job_20230314_153249/results -e robots=off 2023-03-14 15:33:10,509 | [INFO] : Success! Results at http://moss.stanford.edu/results/6/425624063677/index.html
+
+
+--2023-03-14 15:33:10--  ftp://2023-03-14%2015/33:10,509%20%7C%20[INFO]%20:%20Success!%20Results%20at%20http://moss.stanford.edu/results/6/425624063677/index.html
+           => ‘demo/moss_results/demo_assignment_job_20230314_153249/results/index.html’
+Resolving 2023-03-14 15 (2023-03-14 15)... failed: Name or service not known.
+wget: unable to resolve host address ‘2023-03-14 15’
+2023-03-14 16:09:33,170 | [INFO] : Constructing moss.pl command ...
+2023-03-14 16:09:33,179 | [INFO] : moss.pl command constructed.
+2023-03-14 16:09:33,179 | [INFO] : Submitting MOSS job...
+2023-03-14 16:09:33,179 | [DEBUG] : 
+
+Running moss.pl -c "demo_assignment: job submitted at 03/14/2023 04:09 PM EST. Estimated expiration time: 03/28/2023 04:09 PM EST" -l cc -n 250 -m 10 -b demo/assignment/starter/file1.h -b demo/assignment/starter/file1.cpp -d demo/assignment/sem1/studentb02.2/file1.h demo/assignment/sem1/studentb02.2/file1.cpp demo/assignment/sem1/studenta01.2/file1.h demo/assignment/sem1/studenta01.2/file1.cpp demo/assignment/sem2/studentc03.3/file1.h demo/assignment/sem2/studentc03.3/file1.cpp demo/assignment/githubs/githubuser1/file1.h demo/assignment/githubs/githubuser1/file1.cpp
+
+
+Checking files . . . 
+OK
+Uploading demo/assignment/starter/file1.h ...done.
+Uploading demo/assignment/starter/file1.cpp ...done.
+Uploading demo/assignment/sem1/studentb02.2/file1.h ...done.
+Uploading demo/assignment/sem1/studentb02.2/file1.cpp ...done.
+Uploading demo/assignment/sem1/studenta01.2/file1.h ...done.
+Uploading demo/assignment/sem1/studenta01.2/file1.cpp ...done.
+Uploading demo/assignment/sem2/studentc03.3/file1.h ...done.
+Uploading demo/assignment/sem2/studentc03.3/file1.cpp ...done.
+Uploading demo/assignment/githubs/githubuser1/file1.h ...done.
+Uploading demo/assignment/githubs/githubuser1/file1.cpp ...done.
+Query submitted.  Waiting for the server's response.
+http://moss.stanford.edu/results/4/6520923879902
+2023-03-14 16:09:51,548 | [DEBUG] : 
+
+Finished
+
+
+2023-03-14 16:09:51,548 | [DEBUG] : 
+
+MOSS job finished in 18.368250846862793s
+2023-03-14 16:09:51,549 | [INFO] : Success! Results at http://moss.stanford.edu/results/4/6520923879902
+2023-03-14 16:09:51,549 | [DEBUG] : Estimated expiration time: 03/28/2023 04:09 PM EST
+2023-03-14 16:09:51,549 | [DEBUG] : 
+
+Running wget -P demo/moss_results/demo_assignment_job_20230314_160933/results -e robots=off http://moss.stanford.edu/results/4/6520923879902/index.html
+
+
+--2023-03-14 16:09:51--  http://moss.stanford.edu/results/4/6520923879902/index.html
+Resolving moss.stanford.edu (moss.stanford.edu)... 171.64.78.49
+Connecting to moss.stanford.edu (moss.stanford.edu)|171.64.78.49|:80... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 843 [text/html]
+Saving to: ‘demo/moss_results/demo_assignment_job_20230314_160933/results/index.html’
+
+     0K                                                       100% 79.5M=0s
+
+2023-03-14 16:09:52 (79.5 MB/s) - ‘demo/moss_results/demo_assignment_job_20230314_160933/results/index.html’ saved [843/843]
+
+2023-03-14 16:09:52,481 | [DEBUG] : 
+
+Finished
+
+
+2023-03-14 16:09:52,481 | [INFO] : Downloading 0 matches...

@@ -1,0 +1,885 @@
+#!/usr/bin/env python3
+
+"""
+Script that wraps running MOSS perl script with the file structure created by provide.
+
+It provides a nicer interface to running MOSS by internally building a MOSS command, identifying
+the proper submissions to include from Tufts grading directories, and saves the results.
+
+This script should have execute permissions.
+
+Version: 3.12.2024
+
+See https://gitlab.cs.tufts.edu/slamel01/comp15-moss for most up to date version and more information.
+
+Author: Chami Lamelas (slamel01)
+Date: Fall 2022 - Present
+"""
+
+import subprocess
+import inspect
+from datetime import datetime, timedelta
+from pytz import timezone
+import argparse
+import os
+from collections import defaultdict
+import shutil
+import logging
+from pathlib import Path
+import time
+import importlib
+import sys
+import requests
+from math import ceil
+import re
+import grp 
+
+# toml module (from PyPI) is used in place of tomllib (Python standard library) as tomllib
+# will only be available in Python 3.11.x and Tufts server runs Python 3.9.2.
+import toml
+
+
+# Script descriptions ...
+DESCRIPTION = (
+    "This script is used for running Stanford's MOSS plagiarism detection tool."
+)
+EPILOG = "Please visit https://gitlab.cs.tufts.edu/slamel01/comp15-moss to learn how to use this script."
+
+# TOML required settings ...
+CURR_SEM = "curr_sem"
+
+# TOML optional settings ...
+NAME = "name"
+BASE = "base"
+OUTPUT = "output"
+ASSN_DIRS = "assn_dirs"
+DOWNLOAD = "download"
+MATCH_FORMATTER = "match_formatter"
+SUBMISSION_FILTER = "submission_filter"
+CUSTOMS_FILE = "custom_file"
+
+# TOML Job mode (special case) ...
+JOB = "job"
+
+# Defaults for TOML settings ...
+DEFAULTS = {
+    NAME: None,
+    BASE: None,
+    OUTPUT: os.getcwd(),
+    ASSN_DIRS: [],
+    DOWNLOAD: False,
+    MATCH_FORMATTER: None,
+    SUBMISSION_FILTER: None,
+    CUSTOMS_FILE: None,
+}
+
+# Nice time format
+NICE_TIME_FMT = "%m/%d/%Y %I:%M %p"
+
+# Settings from old Tufts grade utility ...
+GRADE_TA_EDIT_DIR = "grading"
+GRADE_SUFFIX = ".bak"
+
+# Relative name of temporary folder created by moss to transfer over bak files
+TEMP_MOSS_DIR = ".tmp_moss_dir"
+
+# Various MOSS script settings ...
+MOSS_EXPIRATION_TIME = 14
+MOSS_N = 250
+MOSS_M = 10
+MOSS_SUBMISSION_SCRIPT = "moss.pl"
+
+# Extensions identifying C++ source files
+CPP_FILES = {".cpp", ".h"}
+GRADE_CPP_FILES = {".cpp" + GRADE_SUFFIX, ".h" + GRADE_SUFFIX}
+
+# Log file name
+LOG_BASENAME = "moss.log"
+CONFIG_COPY_BASENAME = "moss.config"
+URL_BASENAME = "moss.url"
+
+# Formatting settings for matches file
+MATCHES_HEADERS = [
+    "Person1",
+    "Person2",
+    "Person1_Match_Perc",
+    "Person2_Match_Perc",
+    "Lines_Matched",
+    "URL",
+    "Results_Subfolder",
+]
+MATCHES_DELIMITER = "\t"
+MATCHES_BASENAME = "matches.tsv"
+
+# Name for main file in match
+INDEX_BASENAME = "OPENME.html"
+
+# MOSS URL search string
+URL_SEARCH_QUERY = "moss.stanford.edu"
+
+# User must belong to these groups in order to run this script in the Tufts 
+# server system -- if you plan to use this script outside of Tufts,
+# just make this an empty set or change the groups
+REQUIRED_GROUPS = { 'grade15', 'ta15' }
+
+# Non instance method helpers -- more general functions
+
+
+def file_exists(filepath, errmsg=None):
+    """Enforces that filepath is a file"""
+
+    if errmsg is None:
+        errmsg = f"{filepath} is not a file!"
+    assert os.path.isfile(filepath), errmsg
+
+
+def dir_exists(dirpath):
+    """Enforces that dirpath is a directory"""
+
+    assert os.path.isdir(dirpath), f"{dirpath} is not a directory!"
+
+
+def replace_path_seps(e):
+    """Replaces the path separators in a string so it could be a folder name"""
+
+    return e.replace(os.sep, "_")
+
+
+def alwaystrue(_):
+    """Function that always returns True"""
+
+    return True
+
+
+def get_func_byname(module, func_name, substitute):
+    """Gets function object by name from module object, errors are thrown if a function with that name cannot be created"""
+
+    if func_name is None or not hasattr(module, func_name):
+        return substitute
+    func = getattr(module, func_name)
+    if not inspect.isfunction(func):
+        return substitute
+
+    # Note this does not check if the function takes a single parameter, but we assume that a user could
+    # figure this out from the traceback who is comfortable enough with Python to write a custom function
+    # to pass in here
+    return func
+
+
+def get_config_file():
+    """Gets the configuration filename from the command line (a required argument) and sets up help info."""
+
+    parser = argparse.ArgumentParser(description=DESCRIPTION, epilog=EPILOG)
+    parser.add_argument("config", type=str, help="config file")
+    args = parser.parse_args()
+    file_exists(args.config)
+    return args.config
+
+
+def check_and_make(dir_path):
+    """If dir_path is not a directory, make it"""
+
+    if not os.path.isdir(dir_path):
+        os.mkdir(dir_path)
+
+
+def get_submissions(assn_dir):
+    """
+    Gets only the students most recent submissions from a directory if
+    it's a provide directory. Directories with no period or a period followed
+    by not a number are also deemed directories (e.g. can be used with a
+    folder of githubs)
+    """
+
+    # Here we use a defaultdict to make max( ) easier when determining
+    # latest provide submission for a student
+    sub_map = defaultdict(lambda: 0)
+    for entry in os.scandir(assn_dir):
+
+        # Skip files and symlinks
+        if not entry.is_dir():
+            continue
+
+        period_idx = entry.name.find(".")
+        if period_idx >= 0:
+            # Identified a period, try to parse an integer after it
+            # and then update our max value for submission number for
+            # this UTLN
+            try:
+                utln = entry.name[:period_idx]
+                sub_num = int(entry.name[period_idx + 1 :])
+                sub_map[utln] = max(sub_map[utln], sub_num)
+            except ValueError:
+                # Need to do this as we loop over sub_map.items() below
+                # Note, we save the entire name here not just the UTLN
+                # because if there is no integer that follows then we
+                # know it's not a UTLN (e.g. could be an email
+                # as with our hitme system)
+                sub_map[entry.name] = 0
+        else:
+            # Need to do this as we loop over sub_map.items() below
+            sub_map[entry.name] = 0
+
+    # In sub_map, directories not identified as provide submission directories will have
+    # value 0 indicating they should just be treated as regular folders, where with provide
+    # submission folders the key is a UTLN that we need to combine with the max submission num
+    return [
+        os.path.join(assn_dir, k if v == 0 else f"{k}.{v}") for k, v in sub_map.items()
+    ]
+
+
+def make_nice_time(secs):
+    """Turns integer seconds into xm ys"""
+
+    return str(timedelta(seconds=ceil(secs)))
+
+
+def get_last_line_containing(filelines, str):
+    """Get last line in file containing string"""
+
+    lines = filelines.splitlines()
+    for line in lines[::-1]:
+        if str in line:
+            return line.rstrip("\n")
+    return None
+
+
+def get_groups():
+    """Gets the names of the groups the current user belongs to"""
+
+    return { grp.getgrgid(id).gr_name for id in os.getgroups() }
+
+class MOSSRunner:
+    """Main class of the script - instantiate one and run()"""
+
+    def __init__(self, config_file):
+        """Initializes the runner from configuration file path"""
+
+        try:
+            assert REQUIRED_GROUPS.issubset(
+                get_groups()
+            ), f"you need to be in the groups: " + ", ".join(REQUIRED_GROUPS)
+        except AssertionError as e:
+            # Print to stderr not log if anything here fails because logger isn't setup
+            print(f"moss: user check failed: {str(e)}", file=sys.stderr)
+            return 
+
+        try:
+            run_nonjobmode = self.__loadup_config(config_file)
+            self.__setup_logger()
+        except AssertionError as e:
+            # Print to stderr not log if anything here fails because logger isn't setup
+            print(f"moss: configuration failed: {str(e)}", file=sys.stderr)
+            return
+
+        try:
+            if run_nonjobmode:
+                self.logger.info("Constructing moss.pl command ...")
+                self.moss_cmd = ["perl", MOSS_SUBMISSION_SCRIPT]
+                self.__add_html_header()
+                self.__set_lang()
+                self.__set_other_moss_options()
+                self.__add_basefiles()
+                self.__add_assignment_directory_settings()
+                self.logger.info("moss.pl command constructed.")
+                self.__run_nonjob_mode()
+            else:
+                # Load url from URL file to do the download
+                urlfilepath = self.__get_url_filename()
+                file_exists(
+                    urlfilepath,
+                    f"URL file does not exist -- are you sure that {self.config[JOB]} is a job folder?",
+                )
+                self.url = get_last_line_containing(
+                    Path(urlfilepath).read_text(), URL_SEARCH_QUERY
+                )
+                assert self.url is not None, f"Could not find URL in {urlfilepath}"
+                self.__download_results()
+            # Errors with this if-else can be logged
+        except AssertionError as e:
+            self.logger.error(f"moss: running job failed: {str(e)}")
+        except Exception as e:
+            self.logger.exception(f"moss: unexpected error: {str(e)}")
+
+    # Helper functions for loading configuration ...
+
+    def __loadup_config(self, config_file):
+        """Loads up configuration file"""
+
+        self.config_file = config_file
+
+        # Load in TOML into dictionary
+        self.config = toml.loads(Path(config_file).read_text())
+
+        # CURR_SEM must always be provided, and since its a user provided path we make sure
+        # that ~ is expanded into user home directory; we also strip / from the end because
+        # we compare CURR_SEM with match directories to see if we should download
+        # them (see __should_download( )) -- match directories are identified with
+        # os.path.dirname( ) which strips the ending /
+        assert (
+            CURR_SEM in self.config
+        ), f"{CURR_SEM} must be specified in job and non-job modes"
+        self.config[CURR_SEM] = os.path.expanduser(self.config[CURR_SEM]).rstrip(os.sep)
+
+        run_nonjobmode = True
+        if JOB in self.config:
+            # Make sure to handle ~ in job folder
+            self.config[JOB] = os.path.expanduser(self.config[JOB]).rstrip(os.sep)
+
+            # Identified we're in job mode -- either JOB and CURR_SEM are provided or JOB, CURR_SEM,
+            # MATCH_FORMATTER, and CUSTOMS_FILE are provided; we check that JOB folder exists
+            assert len(self.config) == 2 or (
+                len(self.config) == 4
+                and MATCH_FORMATTER in self.config
+                and CUSTOMS_FILE in self.config
+            ), f"{JOB} has been specified, so only {JOB}, {CURR_SEM}, {CUSTOMS_FILE}, and {MATCH_FORMATTER} should be specified"
+
+            dir_exists(self.config[JOB])
+            run_nonjobmode = False
+
+            # This is a bit of a hack -- load_custom( ) assumes that both SUBMISSION_FILTER
+            # and MATCH_FORMATTER have entries in self.config. However, we know that
+            # SUBMISSION_FILTER should not be provided when running in non-job mode.
+            # Therefore, we set it to the default here, it won't be used regardless,
+            # but otherwise, load_custom( ) will crash -- this is akin to loading
+            # the necessary defaults in in the else case below
+            self.config[SUBMISSION_FILTER] = DEFAULTS[SUBMISSION_FILTER]
+        else:
+            for k, v in DEFAULTS.items():
+                # Load in defaults for optional settings if they weren't provided
+                if k not in self.config:
+                    self.config[k] = v
+
+                # If ASSN_DIRS was provided, make sure each of the paths have ~ expanded to user home
+                # directory; then make sure all those expanded paths exist
+                elif k == ASSN_DIRS:
+                    self.config[ASSN_DIRS] = [
+                        os.path.expanduser(p) for p in self.config[ASSN_DIRS]
+                    ]
+                    assert (
+                        self.config[CURR_SEM] not in self.config[ASSN_DIRS]
+                    ), f"{CURR_SEM} should not be in {ASSN_DIRS}"
+                    for p in self.config[ASSN_DIRS]:
+                        dir_exists(p)
+
+                # If BASE was provided, expand and make sure it exists
+                elif k == BASE:
+                    self.config[BASE] = os.path.expanduser(self.config[BASE])
+                    dir_exists(self.config[BASE])
+
+                # If OUTPUT was provided, expand -- but it doesn't have to exist
+                elif k == OUTPUT:
+                    self.config[OUTPUT] = os.path.expanduser(self.config[OUTPUT])
+
+            # In non-job mode, make sure OUTPUT exists if it DNE
+            check_and_make(self.config[OUTPUT])
+
+            # Make job folder here, b/c we're going to put log into that
+            # Need to get submission time before that (used in job folder name construction)
+            self.sub_time = datetime.now(timezone("US/Eastern"))
+            self.config[JOB] = self.__job_folder_name()
+            os.mkdir(self.config[JOB])
+
+        # In both job and non-job modes, load up the custom functions
+        self.__load_custom()
+        return run_nonjobmode
+
+    def __load_custom(self):
+        """Loads custom functions from provided file into class attributes to be used later"""
+
+        if self.config[CUSTOMS_FILE] is not None:
+            # CUSTOMS_FILE is user provided path so we again expand ~ to home dir and make sure
+            # file exists and is a Python file
+            self.config[CUSTOMS_FILE] = os.path.expanduser(self.config[CUSTOMS_FILE])
+            file_exists(self.config[CUSTOMS_FILE])
+            assert self.config[CUSTOMS_FILE].endswith(
+                ".py"
+            ), f"{CUSTOMS_FILE} must be a Python file"
+
+            # Add python file to path and then import the module (assumed to be x if CUSTOM_PATH is PATH/TO/x.py)
+            sys.path.append(os.path.dirname(self.config[CUSTOMS_FILE]))
+            module_name = os.path.basename(self.config[CUSTOMS_FILE])[: -len(".py")]
+            custom_module = importlib.import_module(module_name)
+
+            # Now, load the functions themselves using helper -- substitute defaults if the function can't be
+            # found (remember this can be entered if only 1 of SUBMISSION_FILTER, MATCH_FORMATTER is specified)
+            self.match_formatter = get_func_byname(
+                custom_module, self.config[MATCH_FORMATTER], replace_path_seps
+            )
+            self.submission_filter = get_func_byname(
+                custom_module, self.config[SUBMISSION_FILTER], alwaystrue
+            )
+        else:
+            self.match_formatter = replace_path_seps
+            self.submission_filter = alwaystrue
+
+    # Helper functions for logging ...
+
+    def __setup_logger(self):
+        """Sets up logger - basically copy pasted from the Python logging cookbook"""
+
+        self.log = os.path.join(self.config[JOB], LOG_BASENAME)
+        self.logger = logging.getLogger("github_scraping")
+        self.logger.setLevel(logging.DEBUG)
+        fh = logging.FileHandler(self.log)
+        fh.setLevel(logging.DEBUG)
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.INFO)
+        file_formatter = logging.Formatter(
+            "%(asctime)s | [%(levelname)s] : %(message)s"
+        )
+        fh.setFormatter(file_formatter)
+        console_formatter = logging.Formatter("[%(levelname)s] : %(message)s")
+        ch.setFormatter(console_formatter)
+        self.logger.addHandler(fh)
+        self.logger.addHandler(ch)
+
+    # Helper functions for building MOSS command ...
+
+    def __add_html_header(self):
+        """Adds MOSS comment so we recognize resulting HTML - includes name, submission date + time"""
+
+        self.moss_cmd.extend(
+            [
+                "-c",
+                '"'
+                + (f"{self.config[NAME]}: " if self.config[NAME] else "")
+                + f"job submitted at {self.sub_time.strftime(NICE_TIME_FMT)} EST. "
+                + self.__get_exp_time_msg()
+                + '"',
+            ]
+        )
+
+    def __set_lang(self):
+        """Sets language option to C++ -- have this as a function in case we want user to customize lang in future"""
+
+        self.moss_cmd.extend(["-l", "cc"])
+
+    def __set_other_moss_options(self):
+        """Sets m, n in MOSS -- have this as a function in case we want user to customize m, n in future"""
+
+        self.moss_cmd.extend(["-n", str(MOSS_N), "-m", str(MOSS_M)])
+
+    def __add_basefiles(self):
+        """Adds base files from base directory"""
+
+        if self.config[BASE] is not None:
+            for path in self.__collect_files(self.config[BASE], CPP_FILES):
+                self.moss_cmd.extend(["-b", path])
+
+    def __add_assignment_directory_settings(self):
+        """
+        Adds submission files from assignment directories.
+
+        In particular, it takes .h and .cpp files from the subdirectories of each assignment directory.
+        If there are multiple directories for the same student as returned by provide, such as
+        <name>.x where x = 1, 2, ... this only takes the latest submission. All non directories in
+        the assignment directories are ignored (e.g. time and log files created by provide).
+        """
+
+        self.moss_cmd.append("-d")
+
+        # For each assignment directory (inc. CURR_SEM) add files from it
+        for ad in [self.config[CURR_SEM]] + self.config[ASSN_DIRS]:
+            for sub in get_submissions(ad):
+                self.__add_sub_files(sub)
+
+    # Helper functions for __ad_assignment_directory_settings( ) ...
+
+    def __add_sub_files(self, sub_dir):
+        """
+        Adds submission files from submission directory to MOSS command. This includes
+        dealing with files that were messed up by use of grade utility.
+        """
+
+        if not os.path.isdir(os.path.join(sub_dir, GRADE_TA_EDIT_DIR)):
+            # If no grading folder inside, collect C++ files from this directory
+            # (see __collect_files for filtering) and add to command
+            self.moss_cmd.extend(self.__collect_files(sub_dir, CPP_FILES))
+        else:
+            # Temporary directory where we transfer grading/ files out of and
+            # rename to be .h, .cpp instead of .h.bak, .cpp.bak respectively
+            temp_dir = os.path.join(sub_dir, TEMP_MOSS_DIR)
+
+            # It's possible temp_dir existed if there was some unexpected error from a previous run of
+            # this script, so remove it before reconstructing it
+            if os.path.isdir(temp_dir):
+                shutil.rmtree(temp_dir)
+            os.mkdir(temp_dir)
+
+            # For each submission file found in grading/
+            for path in self.__collect_files(sub_dir, GRADE_CPP_FILES):
+                # Identify path that .bak will be copied to (e.g. test/x.cpp.bak -> test/temp/x.cpp),
+                # then copy there and add path to copied file to MOSS command
+                copied_bak = os.path.join(
+                    temp_dir, os.path.basename(path)[: -len(GRADE_SUFFIX)]
+                )
+                shutil.copy2(path, copied_bak)
+                self.moss_cmd.append(copied_bak)
+
+    class __Match:
+        """Represents a MOSS match"""
+
+        def __init__(self):
+            self.url = None
+            self.person1 = None
+            self.person2 = None
+            self.person1_perc = None
+            self.person2_perc = None
+            self.lines_matched = None
+
+    # __Match helper functions ...
+
+    def __match_toline(self, match):
+        """Converts a Match to a TSV line using provided match formatter"""
+
+        str_comps = [
+            self.match_formatter(match.person1),
+            self.match_formatter(match.person2),
+            str(match.person1_perc),
+            str(match.person2_perc),
+            str(match.lines_matched),
+            match.url,
+            self.__make_dirname(match),
+        ]
+        return MATCHES_DELIMITER.join(str_comps)
+
+    def __make_dirname(self, match):
+        """Makes directory name for a match using match formatter"""
+
+        return (
+            self.match_formatter(match.person1)
+            + "_and_"
+            + self.match_formatter(match.person2)
+        )
+
+    def __should_download(self, match):
+        """Determines whether a match should be downloaded based on 1 of match participants being from directory of current sem"""
+
+        return (
+            os.path.dirname(match.person1) == self.config[CURR_SEM]
+            or os.path.dirname(match.person2) == self.config[CURR_SEM]
+        )
+
+    # Helper functions for running job ...
+
+    def __run_nonjob_mode(self):
+        """Runs non job mode (i.e. when we actually have to run a job)"""
+
+        self.logger.info("Submitting MOSS job...")
+
+        # Save a copy of the config file user provided (in case they lose it)
+        shutil.copy2(
+            self.config_file, os.path.join(self.config[JOB], CONFIG_COPY_BASENAME)
+        )
+
+        # Run MOSS job and report how long it took
+        runtime, output = self.__run_and_monitor(self.moss_cmd)
+        self.logger.debug("MOSS job completion time: " + make_nice_time(runtime))
+
+        # Clean up the temporary directories before we check if URL exists
+        self.__cleanup_moss_folders()
+
+        # For a new job that we've just submitted, we look for it in the output
+        # of the moss.pl commend -- we don't want to read over the whole log file
+        # for which that output was appended to by __run_and_monitor
+        self.url = get_last_line_containing(output, URL_SEARCH_QUERY)
+        assert (
+            self.url is not None
+        ), f"Error occurred with this MOSS job - see {self.log} for details. If there is nothing there that is obvious, most likely the MOSS job timed out waiting for server response, so come back and try again later."
+        self.logger.info("Success! Results at " + self.url)
+        self.logger.debug(self.__get_exp_time_msg())
+
+        # Save URL and expiration to a separate file in job folder for easy user access
+        with open(self.__get_url_filename(), "w+", encoding="utf-8") as url_file:
+            url_file.write(f"{self.url}\n{self.__get_exp_time_msg()}\n")
+
+        # If user wanted to download -- download
+        if self.config[DOWNLOAD]:
+            self.__download_results()
+
+    def __download_results(self):
+        """
+        Downloads MOSS results by first downloading index then parsing match links and downloading
+        each of those. Match information is saved to 2 csv files.
+        """
+
+        # Make folder where matches will be
+        results_path = os.path.join(self.config[JOB], "results")
+        check_and_make(results_path)
+
+        # This is the path where GET downloads it to
+        index_path = os.path.join(results_path, "index.html")
+
+        # Download index with URLs of all the matches -- self.url guaranteed to be
+        # set whether it is called directly in __init__ or by __run_nonjob_mode
+        self.__download(self.url + "/index.html", index_path)
+
+        # Loads matches using helper __parse_line( ) inside <TABLE></TABLE> section of index.html
+        # this code is unstable to how Stanford decides to display MOSS results, but I'd be surprised
+        # if they change things any time soon...
+        self.matches = list()
+        with open(index_path, mode="r", encoding="utf-8") as f:
+            table_line = 0
+            in_table = False
+            for line in f:
+                if "<TABLE>" in line:
+                    in_table = True
+                elif "</TABLE>" in line:
+                    in_table = False
+
+                # Lines Matched is the column header in the line
+                # right after the <TABLE> line - we skip it hence
+                # __parse_line( ) has line_number starting from
+                # 2nd line after <TABLE>
+                elif in_table and "Lines Matched" not in line:
+                    self.__parse_line(line, table_line)
+                    table_line += 1
+
+        # Build matches.tsv and download them into their own folders
+        self.__order_matches()
+        self.__download_matches(results_path)
+
+        # Don't need the original HTML anymore (its links are not relative)
+        os.remove(index_path)
+
+    # Helper functions for __run_nonjob_mode( ) ...
+
+    def __job_folder_name(self):
+        """Gets job directory path"""
+
+        basename = (
+            f"{self.config[NAME]}_" if self.config[NAME] is not None else ""
+        ) + f'job_{self.sub_time.strftime("%Y%m%d_%H%M%S")}'
+        return os.path.join(self.config[OUTPUT], basename)
+
+    def __cleanup_moss_folders(self):
+        """Removes the temporary moss folders created in submissions if grade was utility used"""
+
+        # For each of the assignment directories, go through submissions that we would
+        # have looked into and remove temporary directories if they were created
+        for ad in [self.config[CURR_SEM]] + self.config[ASSN_DIRS]:
+            for sub in get_submissions(ad):
+                temp_dir = os.path.join(sub, TEMP_MOSS_DIR)
+                if os.path.isdir(temp_dir):
+                    shutil.rmtree(temp_dir)
+
+    # Helper functions for __download_results( ) ...
+
+    def __parse_line(self, line, line_number):
+        """
+        Parses Match into matches from line based on line_number
+
+        line_number starts at 0 from second line after <TABLE> in index.html
+        => line_number % 3 == 0 means current line is person 1
+        => line_number % 3 == 1 means current line is person 2
+        => line_number % 3 == 2 means current line has lines matched
+        """
+
+        if line_number % 3 == 0:
+            # Beginning of match data, so we create a __Match
+            self.matches.append(MOSSRunner.__Match())
+
+            # Parse the line -- this is just hardcoded to parse the index HTML
+            # files from Stanford... nothing really clever here, just trying to get
+            # the data from the HTML line.. note that we strip the / here when
+            # storing the submission directories of people in the match (these
+            # will be the submission directories as given in assignment directories
+            # so match formatting is done later; but this is why we always strip ending
+            # path separators above for consistency)
+            url_person_split = line.index('">')
+            self.matches[-1].url = line[line.index('"') + 1 : url_person_split]
+            self.matches[-1].person1 = line[
+                url_person_split + 2 : line.index(" ", url_person_split)
+            ].rstrip("/")
+            self.matches[-1].person1_perc = int(
+                line[line.index("(") + 1 : line.index("%")]
+            )
+        elif line_number % 3 == 1:
+
+            # Similar to if body - just hardcoded to parse their HTML
+            url_person_split = line.index('">')
+            self.matches[-1].person2 = line[
+                url_person_split + 2 : line.index(" ", url_person_split)
+            ].rstrip("/")
+            self.matches[-1].person2_perc = int(
+                line[line.index("(") + 1 : line.index("%")]
+            )
+        else:
+            # Now that we have identified both people in the match we determine if we want to download
+            # it, if we don't we remove that __Match from our collectoin
+            if self.__should_download(self.matches[-1]):
+                self.matches[-1].lines_matched = int(
+                    line[line.index(">") + 1 :].rstrip("\n")
+                )
+            else:
+                self.matches.pop()
+
+    def __order_matches(self):
+        """Orders matches in descending order of lines matched and writes to TSV file"""
+
+        with open(
+            os.path.join(self.config[JOB], MATCHES_BASENAME), mode="w+", encoding="utf-8"
+        ) as lf:
+            lines = [
+                self.__match_toline(m)
+                for m in sorted(
+                    self.matches, reverse=True, key=lambda m: m.lines_matched
+                )
+            ]
+            lf.write(
+                MATCHES_DELIMITER.join(MATCHES_HEADERS) + "\n" + "\n".join(lines) + "\n"
+            )
+
+    def __download_matches(self, results_path):
+        """Downloads match files into results folder and appends results into stdout, stderr files."""
+
+        # matches only stores the matches we wanted to download as identified in parse_line
+        self.logger.info(f"Downloading {len(self.matches)} matches...")
+        for m in self.matches:
+            # Makes directory for it, downloads into it (using URL collected into __Match by parse_line), then renames HTMLs
+            match_dir = os.path.join(results_path, self.__make_dirname(m))
+            check_and_make(match_dir)
+            self.__download_match(m.url, match_dir)
+            self.__rename_htmls(match_dir)
+
+    def __rename_htmls(self, match_dir):
+        """
+        Modifies the HTMLS in a MOSS download folder to have more easily accessible names:
+        matchX.html -> OPENME.html
+        matchX-0.html -> match-0.html
+        matchX-1.html -> match-1.html
+        matchX-top.html -> match-top.html
+        """
+
+        # Identify matchX.html
+        index_file = [e.path for e in os.scandir(match_dir) if "-" not in e.name][0]
+
+        # Identify matchX from matchX.html
+        match_id = index_file[: index_file.rindex(".html")]
+
+        # Builds map of renaming shown above
+        rename_map = dict()
+        for e in os.scandir(match_dir):
+            if e.path == index_file:
+                rename_map[e.name] = INDEX_BASENAME
+            else:
+                # we need to join match_dir with e.path again here because e.path is
+                # relative to match_dir
+                rename_map[e.name] = e.path.replace(match_id, "match")
+
+        # For each file, update its contents so that any references to other files
+        # are updated to be their new names - then rename the files as well
+        for ko in rename_map:
+            path = os.path.join(match_dir, ko)
+            contents = Path(path).read_text()
+            for ki, vi in rename_map.items():
+                contents = contents.replace(ki, vi)
+
+            # for some reason, MOSS HTML files use relative paths in
+            # the matchX.html, matchX-0.html, and matchX-1.html files
+            # but they use (online) links in the matchX-top.html
+            # so here as a precaution in every file I make them relative
+            # by dropping the URL/
+            contents = contents.replace(self.url + "/", "")
+            Path(path).write_text(contents)
+        for k, v in rename_map.items():
+            os.rename(os.path.join(match_dir, k), os.path.join(match_dir, v))
+
+    def __download_match(self, match_url, match_dir):
+        """Downloads all 4 match files into a directory"""
+
+        # Splicing index to splice off extension (note it's negative)
+        extension_idx = -len(".html")
+
+        # Gets:
+        # http://moss.stanford.edu/results/9/3599792119088/match21
+        # From:
+        # http://moss.stanford.edu/results/9/3599792119088/match21.html
+        url_up_to_extension = match_url[:extension_idx]
+
+        # Gets 'match21' from:
+        # http://moss.stanford.edu/results/9/3599792119088/match21.html
+        match_num = match_url[match_url.rindex(os.sep) + 1 : extension_idx]
+
+        # MOSS breaks up the display over 4 files that need to be downloaded
+        # in order to get properly working local HTML files
+        for sub in ["", "-0", "-1", "-top"]:
+            download_url = url_up_to_extension + sub + ".html"
+            destination_dir = os.path.join(match_dir, match_num + sub + ".html")
+            self.__download(download_url, destination_dir)
+
+    # Additional helper functions used within in multiple other helpers ...
+
+    def __get_exp_time_msg(self):
+        """Gets a message on expiration time of a MOSS job submitted at submission time"""
+
+        return f"Estimated expiration time: {(self.sub_time + timedelta(days=MOSS_EXPIRATION_TIME)).strftime(NICE_TIME_FMT)} EST"
+
+    def __collect_files(self, folder, extensions):
+        """
+        Collects all files in a folder that have one of a set of
+        extensions. Handles when folder is not accessed, in which
+        case None is returned
+        """
+
+        try:
+            # List of file paths to be returned
+            files = list()
+            for e in os.scandir(folder):
+                # Skip directories and symlinks and files with no extension
+                if not e.is_file() or "." not in e.name:
+                    continue
+
+                # Check if file's extension is in extensions and if the path to the file
+                # passes user provided submission filter. Note to identify the extension
+                # we get everything after the . as the extension, this is to account for
+                # the grading folder which ends files with .h.bak and the extensions
+                # we look for are .h.bak and .cpp.bak (rindex would give .bak).
+                if e.name[e.name.index(".") :] in extensions and self.submission_filter(
+                    e.path
+                ):
+                    files.append(e.path)
+            return files
+        except PermissionError as e:
+            # Some folders on Tufts grading server are locked to certain people, we just skip
+            # them but warn the user
+            self.logger.warning(
+                f"Could not collect files from {folder} -- permission denied"
+            )
+            return []
+
+    def __run_and_monitor(self, cmd):
+        """Runs a command in a child process, times it, and logs its stderr + stdout to log file"""
+
+        self.logger.debug(f"Running {' '.join(cmd)}")
+        ti = time.time()
+        result = subprocess.run(cmd, stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+        tf = time.time()
+        contents = result.stdout.decode("utf-8")
+        with open(self.log, mode="a") as file:
+            file.write(contents)
+        self.logger.debug(f"Finished")
+        return tf - ti, contents
+
+    def __get_url_filename(self):
+        """Gets URL filepath in a job"""
+
+        return os.path.join(self.config[JOB], URL_BASENAME)
+
+    def __download(self, url, output_fp):
+        """Downloads URL into output file"""
+
+        self.logger.debug(f"Running GET {url}")
+        response = requests.get(url)
+        if response.ok:
+            Path(output_fp).write_text(response.text)
+            self.logger.debug(f"Response saved to {output_fp}")
+        else:
+            self.logger.warning(
+                f"GET {url} failed. Status: {response.status_code} Reason: {response.reason}"
+            )
+
+
+if __name__ == "__main__":
+    MOSSRunner(get_config_file())
