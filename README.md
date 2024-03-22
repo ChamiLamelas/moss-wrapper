@@ -1,7 +1,12 @@
 # MOSS Wrapper
 
 ## Description
-This repository is for `moss` a wrapper of `moss.pl`. `moss.pl` is the [Measure of Software Similarity (MOSS)](http://theory.stanford.edu/~aiken/moss/) submission script. `moss` was designed for Tufts University computer science courses and enables use of MOSS with the Tufts Computer Science Department `provide` submission and `grade` frameworks, provides a more user friendly interface, and enables downloading of MOSS results in the interest of maintaining a record of plagiarism cases.
+This repository is for `moss` a wrapper of `moss.pl`. `moss.pl` is the [Measure of Software Similarity (MOSS)](http://theory.stanford.edu/~aiken/moss/) submission script. `moss` was designed for Tufts University computer science courses and offers the following features: 
+
+* It enables use of MOSS with the Tufts Computer Science Department `provide` submission and `grade` frameworks.
+* It provides a more user friendly interface than `moss.pl` in terms of specifying base files and even the files to upload.
+* It enables organized downloading of MOSS results in the interest of maintaining a record of plagiarism cases (and not relying on the MOSS servers being stable).
+* It offers protection against someone uploading files that could break MOSS (e.g. a non source file named like a source file, e.g. a zip named `x.cpp`).
 
 MOSS can be used to detect plagiarism in students' code. [This somewhat humorous article](https://github.com/genchang1234/How-to-cheat-in-computer-science-101) describes some types of plagiarism that can be detected. MOSS has influenced other plagiarism detection software such as the [software used by Gradescope](https://www.cs.washington.edu/lab/course-resources/gradescope). However, one benefit using MOSS outside of Gradescope is that you can incorporate previous semesters as well as scraped GitHub reposchangeitories into the job. 
 
@@ -367,6 +372,7 @@ This script used to output things somewhat differently. The most important diffe
 
 ## Acknowledgements
 * [Matt Russell](https://www.linkedin.com/in/matthew-russell-152a4414/) -- I took the idea of allowing users to specify their own match formatting, submission filtering as functions in a Python file based on what Matt does with `canonicalizers.py` in his [CS 15 autograder](https://gitlab.cs.tufts.edu/mrussell/gradescope-autograder). I also used his approach of loading TOML files into Python dataclasses.
+* Ryan Polhemus -- gave me the idea of using magic numbers (i.e. the Linux `file` command) to do better checks on files before uploading to MOSS via `moss.pl` to protect against the `x.java` zip file "exploit".
 
 ## Changelog
 
