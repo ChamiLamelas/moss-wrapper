@@ -94,9 +94,15 @@ Suppose we have the following submissions directory.
 
 The first six folders follow the Tufts provide form. `moss` will only select the most recent submissions of these. In this case, `student1.3`, `student2.1`, and `student3.2`. The other folders are identified to be in normal form as they do not have `.` followed by a number, so they are also identified as submissions.
 
-Within each of these folders, `moss` will grab any `.h` and `.cpp` file that also passes the provided `submission_filter`. Any directories or symlinks or other files inside will be ignored, so you can leave in other things students may submit (READMEs, input files, etc.).
+Within each of these folders, `moss` will: 
 
-Note this is one Tufts-specific automation that `moss` makes, the other has to do with adjusting for the `grade` utility used in the past. Please read [this section](#what-is-special-about-studentd041) in the demo for more information.
+1. Reject any files that fail the `submission_filter` if it was provided.
+2. Use the `source_file_types` first to look for files whose types contain those strings. Any that match are collected.
+3. Use the `source_extensions` to collect other files. These candidates are then checked to be non-empty text files. Those that match are collected as well.  
+
+Any directories or symlinks or other files inside will be ignored, so you can leave in other things students may submit (READMEs, input testing files, etc.). 
+
+Note this is one Tufts-specific automation that `moss` makes, the other has to do with adjusting for the `grade` utility used in the past. Please read [this section](#what-is-special-about-studentd041) in the demo for more information. If you have some submission framework where students have code in nested directories, you will have to flatten those directories. We actually do this with GitHubs we scrape before piping them into this script.
 
 #### **What should `match_formatter` look like?**
 
@@ -153,7 +159,7 @@ submission_filter = "filter_fake_student"
 
 Job mode is designed in the event you have already run `moss` but did not specify `download = true` and you want go back and download results. This assumes you have already run `moss` successfully. In this mode you can specify either two or four TOML configuration options. The two options you must supply are `curr_sem` as defined in [Non-Job Mode](#non-job-mode) and `job`. `job` is a string that is a path to a previously created job folder that will hold the URL file. Recall from the description of `output` in [Non-Job Mode](#non-job-mode) that a job folder will always hold a URL file. 
 
-You can additionally supply `custom_file` and `match_formatter` as described in [Non-Job Mode](#non-job-mode). However you *cannot supply any other options in the TOML*. 
+You can additionally supply `custom_file` and `match_formatter` as described in [Non-Job Mode](#non-job-mode). However you *other TOML options will be ignored if `job` is specified*. 
 
 ## Demonstrations
 
@@ -389,6 +395,7 @@ This script used to output things somewhat differently. The most important diffe
 * Minor improvements to error reporting.
 * Additional minor code refactoring.
 * Bring demo up to date with previous changes
+* README updates
 
 ### 3.21.2024
 * Moved from [GitLab](https://gitlab.cs.tufts.edu/slamel01/comp15-moss) to [GitHub](https://github.com/ChamiLamelas/moss-wrapper).
