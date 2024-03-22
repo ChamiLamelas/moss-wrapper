@@ -328,6 +328,8 @@ class MOSSRunner:
         """
 
         if not self.run_jobmode:
+            # Handy to print this so user can cd into it 
+            self.logger.info(f"Job folder is {self.config.job}")
             self.logger.info("Constructing moss.pl command ...")
             self.moss_cmd = ["perl", "moss.pl"]
             self.__add_html_header()
@@ -358,52 +360,6 @@ class MOSSRunner:
 
         self.config.job = convert_user_specified_path(self.config.job)
         dir_exists(self.config.job)
-
-    def __should_collect(self, filepath):
-        """
-        Function that determines whether a file should be collected
-        into MOSS job it goes through a series of checks. This is
-        a crucial component of building the moss.pl command.
-
-        First, if the submission_filter denies the path, then
-        we don't do any further checks.
-
-        Second, the magic number file type (think Linux file command)
-        is checked to contain any of the source_file_types. This is
-        to protect against a student naming say x.cpp to x to hide
-        that it's a source file.
-
-        Third, the extension is checked. If it belongs to the set
-        of allowed extensions, the file is considered a candidate to
-        add. Otherwise, the file is rejected.
-
-        Lastly, the candidate is added if it is a text file with that extension
-        as source files are always considered text. This is to protect
-        against a student naming say a binary file or zip file as
-        x.cpp (probably by accident) which crashes MOSS.
-        """
-
-        if not self.submission_filter(filepath):
-            return False
-
-        filetype = magic.from_file(filepath)
-
-        # File is not one of the desired types
-        if any(ft in filetype for ft in self.config.source_file_types):
-            return True
-
-        # Remove .bak if it's there before doing the extension check
-        if filepath.endswith(GRADE_SUFFIX):
-            filepath = filepath[: -len(GRADE_SUFFIX)]
-        period = filepath.rfind(".")
-
-        # File has no extension or it's extension isn't in set -> False
-        if period < 0 or filepath[period:] not in self.config.source_extensions:
-            return False
-
-        # Collect file if it's text -- empty files will be ignored by 
-        # this as they have type 'empty'
-        return "text" in filetype
 
     def __load_nonjobmode_config(self):
         """If user has specified we are running a job, we use this to load config"""
@@ -498,6 +454,52 @@ class MOSSRunner:
         self.logger.addHandler(ch)
 
     # Helper functions for building MOSS command ...
+
+    def __should_collect(self, filepath):
+        """
+        Function that determines whether a file should be collected
+        into MOSS job it goes through a series of checks. This is
+        a crucial component of building the moss.pl command.
+
+        First, if the submission_filter denies the path, then
+        we don't do any further checks.
+
+        Second, the magic number file type (think Linux file command)
+        is checked to contain any of the source_file_types. This is
+        to protect against a student naming say x.cpp to x to hide
+        that it's a source file.
+
+        Third, the extension is checked. If it belongs to the set
+        of allowed extensions, the file is considered a candidate to
+        add. Otherwise, the file is rejected.
+
+        Lastly, the candidate is added if it is a text file with that extension
+        as source files are always considered text. This is to protect
+        against a student naming say a binary file or zip file as
+        x.cpp (probably by accident) which crashes MOSS.
+        """
+
+        if not self.submission_filter(filepath):
+            return False
+
+        filetype = magic.from_file(filepath)
+
+        # File is not one of the desired types
+        if any(ft in filetype for ft in self.config.source_file_types):
+            return True
+
+        # Remove .bak if it's there before doing the extension check
+        if filepath.endswith(GRADE_SUFFIX):
+            filepath = filepath[: -len(GRADE_SUFFIX)]
+        period = filepath.rfind(".")
+
+        # File has no extension or it's extension isn't in set -> False
+        if period < 0 or filepath[period:] not in self.config.source_extensions:
+            return False
+
+        # Collect file if it's text -- empty files will be ignored by 
+        # this as they have type 'empty'
+        return "text" in filetype
 
     def __add_html_header(self):
         """Adds MOSS comment so we recognize resulting HTML - includes name, submission date + time"""
