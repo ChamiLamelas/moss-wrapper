@@ -1,9 +1,11 @@
-# COMP15 MOSS Script
+# MOSS Wrapper
 
 ## Description
-This repository is for `moss` a wrapper of `moss.pl`. `moss.pl` is the [Measure of Software Similarity (MOSS)](http://theory.stanford.edu/~aiken/moss/) submission script. `moss` is designed for Tufts University course [CS 15](https://www.cs.tufts.edu/comp/15/) and enables use of MOSS with the Tufts Computer Science Department `provide` submission and `grade` frameworks, provides a more user friendly interface, and enables downloading of MOSS results in the interest of maintaining a record of plagiarism cases.
+This repository is for `moss` a wrapper of `moss.pl`. `moss.pl` is the [Measure of Software Similarity (MOSS)](http://theory.stanford.edu/~aiken/moss/) submission script. `moss` was designed for Tufts University computer science courses and enables use of MOSS with the Tufts Computer Science Department `provide` submission and `grade` frameworks, provides a more user friendly interface, and enables downloading of MOSS results in the interest of maintaining a record of plagiarism cases.
 
 MOSS can be used to detect plagiarism in students' code. [This somewhat humorous article](https://github.com/genchang1234/How-to-cheat-in-computer-science-101) describes some types of plagiarism that can be detected. MOSS has influenced other plagiarism detection software such as the [software used by Gradescope](https://www.cs.washington.edu/lab/course-resources/gradescope). However, one benefit using MOSS outside of Gradescope is that you can incorporate previous semesters as well as scraped GitHub reposchangeitories into the job. 
+
+**Fall 2022 - Present**
 
 ## Prerequisites
 
@@ -26,20 +28,28 @@ This script requires the user to pass in a [TOML](https://toml.io/en/) configura
 
 This is the regular mode that you are more likely to use. This mode submits a job to Stanford's servers to run MOSS and identify plagiarism. For this mode, you must specify the `curr_sem` setting to be a string that has the path to the directory holding submissions for an assignment that will be considered the current semester. See [here](#what-should-curr_sem-and-assn_dirs-directories-look-like) for how this directory should be set up. 
 
-There are some additional optional configuration options you can specify in the TOML listed here.
+This is the full list of configuration options you can specify in the TOML listed here. The default values have been specified in the context of [CS 15](https://www.cs.tufts.edu/comp/15/).
 
-| Option | Default Value | Description | 
-|---|---|---|
-| `name` | `None` | Name of the assignment. This will be displayed in MOSS results and in downloaded folder name. It is recommended you set this so you can keep track of MOSS results if you're running jobs for various assignments and are storing them all together. |
-| `base` | `None` | MOSS allows you to provide base files that are provided to students that are similar among all student submissions. This helps reduce false positives for instances of plagiarism. This is the directory where these base files are stored. See [here](#what-should-base-directory-look-like) for how this directory should be set up. |
-| `output` | `"."` | This is the directory where all output from this script will go consolidated in a job folder. `moss` creates a job folder named with `name` if it was provided as well as the date and time to make it unique within `output`. This job folder includes at least a file with the MOSS returned URL and the script's log. However, if `download` is set to `true`, then the matches will also be downloaded into there as well. |
-| `assn_dirs` | `[]` | List of additional assignment directories to include in the job in addition to the current semester. This should be a list of strings of paths to these directories. These directories could be previous semesters or GitHub repositories for example. See [here](#what-should-curr_sem-and-assn_dirs-directories-look-like) for how these directories should be set up. |
-| `download` | `false` | This specifies whether MOSS results should be downloaded from the provided MOSS URL. **While this is `false` by default, it is recommended you set this to `true` to avoid having to run in job mode.** The way `moss` downloads results is more easily usable than the results shown online and means you don't have to resubmit jobs once the two week time window MOSS provide expires if you are conducting a longer term investigation. |
-| `match_formatter` | `None` | This is a string specifying a Python function in `custom_file` that will be used to format directory names in matches. See [here](#what-should-match_formatter-look-like) for how this should be written. |
-| `submission_filter` | `None` | This is a string specifying a Python function in `custom_file` that will be used to filter out certain files from submission directories when running MOSS. See [here](#what-should-submission_filter-look-like) for how this should be written. |
-| `custom_file` | `None` | This is a string specifying a path to a Python source file that contains `match_formatter` and `submission_filter`. *This must be provided if either `match_formatter` or `submission_filter` is provided.* |
+| Option | Type | Default Value | Description |
+|---|---|---|---|
+| `name` | `str` | `None` | Name of the assignment. This will be displayed in MOSS results and in downloaded folder name. It is recommended you set this so you can keep track of MOSS results if you're running jobs for various assignments and are storing them all together. |
+| `base` | `str` | `None` | MOSS allows you to provide base files that are provided to students that are similar among all student submissions. This helps reduce false positives for instances of plagiarism. This is the directory where these base files are stored. See [here](#what-should-base-directory-look-like) for how this directory should be set up. |
+| `output` | `str` | `"."` | This is the directory where all output from this script will go consolidated in a job folder. `moss` creates a job folder named with `name` if it was provided as well as the date and time to make it unique within `output`. This job folder includes at least a file with the MOSS returned URL and the script's log. However, if `download` is set to `true`, then the matches will also be downloaded into there as well. |
+| `curr_sem` | `str` | Required | This is the assignment directory corresponding to the submissions in the current semester. This is used to determine which results to save from MOSS. See [here](#what-should-curr_sem-and-assn_dirs-directories-look-like) for how these directories should be set up. |
+| `assn_dirs` | `List[str]` | `[]` | List of additional assignment directories to include in the job in addition to the current semester. This should be a list of strings of paths to these directories. These directories could be previous semesters or GitHub repositories for example. See [here](#what-should-curr_sem-and-assn_dirs-directories-look-like) for how these directories should be set up. |
+| `download` | `bool` | `false` | This specifies whether MOSS results should be downloaded from the provided MOSS URL. **While this is `false` by default, it is recommended you set this to `true` to avoid having to run in job mode.** The way `moss` downloads results is more easily usable than the results shown online and means you don't have to resubmit jobs once the two week time window MOSS provide expires if you are conducting a longer term investigation. |
+| `match_formatter` | `str` | `None` | This is a string specifying a Python function in `custom_file` that will be used to format directory names in matches. See [here](#what-should-match_formatter-look-like) for how this should be written. |
+| `submission_filter` | `str` | `None` | This is a string specifying a Python function in `custom_file` that will be used to filter out certain files from submission directories when running MOSS. See [here](#what-should-submission_filter-look-like) for how this should be written. |
+| `custom_file` | `str` | `None` | This is a string specifying a path to a Python source file that contains `match_formatter` and `submission_filter`. *This must be provided if either `match_formatter` or `submission_filter` is provided.* |
+| `submissions_to_collect` | `int` | 250 | This corresponds to the `-n` value in `moss.pl` which determines the number of matching files to show in the results. The default value is the `moss.pl` default which I've never touched. |
+| `threshold_for_repeated_code` | `int` | 10 | This corresponds to the `-m` value in `moss.pl` which sets the maximum number of times a given passage may appear before it is ignored.  A passage of code that appears in many programs is probably legitimate sharing and not the result of plagiarism.  With `-m N`, any passage appearing in more than `N` programs is treated as if it appeared in a base file (i.e., it is never reported). Note, `moss.pl` gives a second explanation of `-m` after this which from experience is incorrect and most likely an old comment. The default value is the `moss.pl` default which I've never touched. |
+| `language` | `str` | `"cc"` | This corresponds to the `-l` value in `moss.pl` which sets the language of the submissions. The current list in `moss.pl` is `"c", "cc", "java", "ml", "pascal", "ada", "lisp", "scheme", "haskell", "fortran", "ascii", "vhdl", "perl", "matlab", "python", "mips", "prolog", "spice", "vb", "csharp", "modula2", "a8086", "javascript", "plsql"`. However, it is unclear whether `moss.pl` enforces it. |
+| `source_extensions` | `List[str]` | `[".h", ".cpp"]` | Provides a list of file extensions to specify which files should be input to `moss.pl` to submit to the MOSS servers. Note files with any of these extensions are checked to be text files. This is done to protect against a student accidentally renaming something that isn't a source file to have one of the expected extensions. There is no protection in MOSS against this, and the job will fail (this is learned from personal experience). *Note, if this is empty, then no files will be match on extension.* This is used in addition to `source_file_types` to collect files. |
+| `source_file_types` | `List[str]` | `["C source", "C++ source"]` | Provides a list of strings that will be searched in the file types of a file. Any file whose type contains at least one of these strings is collected into the job. By file types, we mean the types reported by the Linux `file` command. For example `file x.cpp` could report things like `C++ source, ASCII text`, `C++ source, ASCII text, with CRLF line terminators`, `C source, ASCII text`, or others. You should set this to be a relatively conservative list. Don't put things like `text` as non source files (e.g. a README) will be included. If some source files don't have types who contain any string in `source_file_types`, they could be handled based on the extension specified in `source_extensions`. So, tune these parameters jointly. |
+| `required_groups` | `List[str]` | `["grade15", "ta15"]` | This allows one to specify which groups the user running `moss` must belong to in order to run the script appropriately. For example, if submission directories are in protected folders, this is provides a nice check to make sure the person running this script can access them. |
 
-#### **What should `BASE` directory look like?**
+
+#### **What should `base` directory look like?**
 
 The base directory should have the files provided to the students inside. For example, it could look something like this: 
 
@@ -55,9 +65,9 @@ We would specify this in the TOML with `base = "~/courses/cs50/spring2023/assn1/
 
 Only the `.h` and `.cpp` files will be taken from this folder (`Utilities.h` and `Utilities.cpp`), all other files, directories, and symlinks will be ignored so you do not have to worry about having them there.
 
-#### **What should `CURR_SEM` and `ASSN_DIRS` directories look like?**
+#### **What should `curr_sem` and `assn_dirs` directories look like?**
 
-`CURR_SEM` and `ASSN_DIRS` all form assignment directories. They should have the students' submissions collected into folders inside. It is assumed these folders are uniquely identifiable in some way (e.g. with a student ID or GitHub username, repository combination). Students submission directories should take on one of two forms. 
+`curr_sem` and `assn_dirs` all form assignment directories. They should have the students' submissions collected into folders inside. It is assumed these folders are uniquely identifiable in some way (e.g. with a student ID or GitHub username, repository combination). Students submission directories should take on one of two forms. 
 
 1. The Tufts provide form. Here, students are allowed to submit multiple times and the submissions are numbered based on their name followed by `.` and a number. 
 
@@ -347,8 +357,7 @@ This script used to output things somewhat differently. The most important diffe
 
 ## Potential Upgrades
 
-* This script has been designed with the intention of use in a particular Tufts University computer science course (CS 15) in terms of how submission directories are identified, the language being C++, etc. This script could be made somewhat more generalizable in terms of allowing users to change MOSS settings like the language, or `m` and `n` values. It could also generalize additional operations in a similar way to `match_formatter` and `submission_filter`. However, in order to keep the course infrastructure simple, I do not plan to make these changes in the near future, but I do not expect they would be difficult to do.
-* Downloads could be sped up by having each match download be done in a separate process. Match downloads are entirely independent from each other and no other aspect of the program depends on them. `matches.tsv` is created before the downloading process begins. I would particularly recommend using processes instead of threads to avoid GIL contention. I think this change would be easily made to `__download_match`, just make sure the `Process` objects are saved somewhere to be joined on.
+* Downloads could be sped up by having each match download be done in a separate process. Match downloads are entirely independent from each other and no other aspect of the program depends on them. `matches.tsv` is created before the downloading process begins. I would particularly recommend using processes instead of threads to avoid GIL contention. I think this change would be easily made to `__download_match`, just make sure the `Process` objects are saved somewhere to be joined on. Would also have to deal with cross process logging to a file.
 
 ## Support
 * Contact: Swaminathan.Lamelas@tufts.edu
@@ -357,9 +366,23 @@ This script used to output things somewhat differently. The most important diffe
 * [Chami Lamelas](https://sites.google.com/brandeis.edu/chamilamelas) -- Developer
 
 ## Acknowledgements
-* [Matt Russell](https://www.linkedin.com/in/matthew-russell-152a4414/) -- I took the idea of allowing users to specify their own match formatting, submission filtering as functions in a Python file based on what Matt does with `canonicalizers.py` in his [CS 15 autograder](https://gitlab.cs.tufts.edu/mrussell/gradescope-autograder).
+* [Matt Russell](https://www.linkedin.com/in/matthew-russell-152a4414/) -- I took the idea of allowing users to specify their own match formatting, submission filtering as functions in a Python file based on what Matt does with `canonicalizers.py` in his [CS 15 autograder](https://gitlab.cs.tufts.edu/mrussell/gradescope-autograder). I also used his approach of loading TOML files into Python dataclasses.
 
 ## Changelog
+
+### 3.22.2024
+* Clean up configuration by loading TOML into a dataclass instead of a dictionary and then separately handling defaults. 
+* Files that are collected to upload are now also checked to be text based on magic number in addition to extension to avoid the `X.java` bug.
+* Magic number check is done to identify any source files that may be disguised (e.g. `x.cpp -> x`). This is done via the user supplying a conservative list of strings `source_file_types`. Any file with a type that contains at least one of those strings will be included regardless of the extension.
+* Added more configuration options to enable more widespread use:
+  * MOSS `-m` and `-n` options can be set.
+  * MOSS language option can be set.
+  * File types for submission (see above).
+  * If above not specified, extensions.
+  * Required groups can now be specified.
+* Minor improvements to error reporting.
+* Additional minor code refactoring.
+* Bring demo up to date with previous changes
 
 ### 3.21.2024
 * Moved from [GitLab](https://gitlab.cs.tufts.edu/slamel01/comp15-moss) to [GitHub](https://github.com/ChamiLamelas/moss-wrapper).

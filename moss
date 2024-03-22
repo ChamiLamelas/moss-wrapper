@@ -9,9 +9,10 @@ a more organized manner. Saving the results should not be underrated. It allows 
 the results after MOSS expiration or in the (surprisngly common) instance when the MOSS
 results server(s) go down.
 
-This script should have execute permissions.
+This script should have execute permissions if you wish to run it with ./moss. However,
+it can just be run with python moss.
 
-Version: 3.21.2024
+Version: 3.22.2024
 
 See https://github.com/ChamiLamelas/moss-wrapper for the most up to date version and more information.
 
@@ -34,8 +35,11 @@ import importlib
 import sys
 import requests
 from math import ceil
-import re
-import grp 
+import grp
+import magic
+from dataclasses import dataclass, field, fields
+from typing import List
+import traceback
 
 # toml module (from PyPI) is used in place of tomllib (Python standard library) as tomllib
 # will only be available in Python 3.11.x and Tufts server runs Python 3.9.2.
@@ -46,35 +50,68 @@ import toml
 DESCRIPTION = (
     "This script is used for running Stanford's MOSS plagiarism detection tool."
 )
-EPILOG = "Please visit https://gitlab.cs.tufts.edu/slamel01/comp15-moss to learn how to use this script."
+EPILOG = "Please visit https://github.com/ChamiLamelas/moss-wrapper to learn how to use this script."
 
-# TOML required settings ...
-CURR_SEM = "curr_sem"
 
-# TOML optional settings ...
-NAME = "name"
-BASE = "base"
-OUTPUT = "output"
-ASSN_DIRS = "assn_dirs"
-DOWNLOAD = "download"
-MATCH_FORMATTER = "match_formatter"
-SUBMISSION_FILTER = "submission_filter"
-CUSTOMS_FILE = "custom_file"
+@dataclass
+class MOSSConfig:
+    """Stores configuration for this wrapper"""
 
-# TOML Job mode (special case) ...
-JOB = "job"
+    name: str = None
+    base: str = None
+    output: str = os.getcwd()
+    curr_sem: str = None
+    assn_dirs: List[str] = field(default_factory=list)
+    download: bool = False
+    match_formatter: str = None
+    submission_filter: str = None
+    custom_file: str = None
+    job: str = None
+    submissions_to_collect: int = 250
+    threshold_for_repeated_code: int = 10
+    language: str = "cc"
+    source_extensions: List[str] = field(default_factory=lambda: [".h", ".cpp"])
+    source_file_types: List[str] = field(
+        default_factory=lambda: ["C source", "C++ source"]
+    )
+    required_groups: List[str] = field(default_factory=lambda: ["grade15", "ta15"])
 
-# Defaults for TOML settings ...
-DEFAULTS = {
-    NAME: None,
-    BASE: None,
-    OUTPUT: os.getcwd(),
-    ASSN_DIRS: [],
-    DOWNLOAD: False,
-    MATCH_FORMATTER: None,
-    SUBMISSION_FILTER: None,
-    CUSTOMS_FILE: None,
-}
+    def __repr__(self):
+        """
+        Displays configuration like:
+
+        name:
+            blah ...
+        base:
+            blah ...
+        etc.
+        """
+
+        return "\n".join(
+            f"{f.name}:\n\t{getattr(self, f.name)}" for f in fields(MOSSConfig)
+        )
+
+    def __str__(self):
+        return repr(self)
+
+
+class MOSSError(Exception):
+    """Error class raised by our code"""
+
+    pass
+
+
+class MOSSMatch:
+    """Represents a MOSS match"""
+
+    def __init__(self):
+        self.url = None
+        self.person1 = None
+        self.person2 = None
+        self.person1_perc = None
+        self.person2_perc = None
+        self.lines_matched = None
+
 
 # Nice time format
 NICE_TIME_FMT = "%m/%d/%Y %I:%M %p"
@@ -87,14 +124,7 @@ GRADE_SUFFIX = ".bak"
 TEMP_MOSS_DIR = ".tmp_moss_dir"
 
 # Various MOSS script settings ...
-MOSS_EXPIRATION_TIME = 14
-MOSS_N = 250
-MOSS_M = 10
-MOSS_SUBMISSION_SCRIPT = "moss.pl"
-
-# Extensions identifying C++ source files
-CPP_FILES = {".cpp", ".h"}
-GRADE_CPP_FILES = {".cpp" + GRADE_SUFFIX, ".h" + GRADE_SUFFIX}
+MOSS_EXPIRATION_TIME_DAYS = 14
 
 # Log file name
 LOG_BASENAME = "moss.log"
@@ -120,12 +150,23 @@ INDEX_BASENAME = "OPENME.html"
 # MOSS URL search string
 URL_SEARCH_QUERY = "moss.stanford.edu"
 
-# User must belong to these groups in order to run this script in the Tufts 
-# server system -- if you plan to use this script outside of Tufts,
-# just make this an empty set or change the groups
-REQUIRED_GROUPS = { 'grade15', 'ta15' }
 
 # Non instance method helpers -- more general functions
+
+
+def is_importable_python_file(filepath):
+    """Checks if file is a Python file one can import from"""
+
+    if not filepath.endswith(".py"):
+        raise MOSSError(f"To import from {filepath}, it must end with .py")
+    if "text" not in magic.from_file(filepath).lower():
+        raise MOSSError(f"{filepath} is not a text file and likely not a Python file")
+
+
+def convert_user_specified_path(path):
+    """Converts path specified by user (e.g. including ~) into a real path"""
+
+    return os.path.expanduser(path).rstrip(os.sep)
 
 
 def file_exists(filepath, errmsg=None):
@@ -133,13 +174,15 @@ def file_exists(filepath, errmsg=None):
 
     if errmsg is None:
         errmsg = f"{filepath} is not a file!"
-    assert os.path.isfile(filepath), errmsg
+    if not os.path.isfile(filepath):
+        raise MOSSError(errmsg)
 
 
 def dir_exists(dirpath):
     """Enforces that dirpath is a directory"""
 
-    assert os.path.isdir(dirpath), f"{dirpath} is not a directory!"
+    if not os.path.isdir(dirpath):
+        raise MOSSError(f"{dirpath} is not a directory!")
 
 
 def replace_path_seps(e):
@@ -182,8 +225,7 @@ def get_config_file():
 def check_and_make(dir_path):
     """If dir_path is not a directory, make it"""
 
-    if not os.path.isdir(dir_path):
-        os.mkdir(dir_path)
+    Path(dir_path).mkdir(exist_ok=True, parents=True)
 
 
 def get_submissions(assn_dir):
@@ -247,170 +289,188 @@ def get_last_line_containing(filelines, str):
     return None
 
 
-def get_groups():
-    """Gets the names of the groups the current user belongs to"""
-
-    return { grp.getgrgid(id).gr_name for id in os.getgroups() }
-
 class MOSSRunner:
-    """Main class of the script - instantiate one and run()"""
+    """Main class of the script - instantiate one and call run()"""
 
     def __init__(self, config_file):
         """Initializes the runner from configuration file path"""
 
-        try:
-            assert REQUIRED_GROUPS.issubset(
-                get_groups()
-            ), f"you need to be in the groups: " + ", ".join(REQUIRED_GROUPS)
-        except AssertionError as e:
-            # Print to stderr not log if anything here fails because logger isn't setup
-            print(f"moss: user check failed: {str(e)}", file=sys.stderr)
-            return 
-
-        try:
-            run_nonjobmode = self.__loadup_config(config_file)
-            self.__setup_logger()
-        except AssertionError as e:
-            # Print to stderr not log if anything here fails because logger isn't setup
-            print(f"moss: configuration failed: {str(e)}", file=sys.stderr)
-            return
-
-        try:
-            if run_nonjobmode:
-                self.logger.info("Constructing moss.pl command ...")
-                self.moss_cmd = ["perl", MOSS_SUBMISSION_SCRIPT]
-                self.__add_html_header()
-                self.__set_lang()
-                self.__set_other_moss_options()
-                self.__add_basefiles()
-                self.__add_assignment_directory_settings()
-                self.logger.info("moss.pl command constructed.")
-                self.__run_nonjob_mode()
-            else:
-                # Load url from URL file to do the download
-                urlfilepath = self.__get_url_filename()
-                file_exists(
-                    urlfilepath,
-                    f"URL file does not exist -- are you sure that {self.config[JOB]} is a job folder?",
-                )
-                self.url = get_last_line_containing(
-                    Path(urlfilepath).read_text(), URL_SEARCH_QUERY
-                )
-                assert self.url is not None, f"Could not find URL in {urlfilepath}"
-                self.__download_results()
-            # Errors with this if-else can be logged
-        except AssertionError as e:
-            self.logger.error(f"moss: running job failed: {str(e)}")
-        except Exception as e:
-            self.logger.exception(f"moss: unexpected error: {str(e)}")
-
-    # Helper functions for loading configuration ...
-
-    def __loadup_config(self, config_file):
-        """Loads up configuration file"""
-
         self.config_file = config_file
+        self.__parse_toml()
+        self.__check_groups()
 
-        # Load in TOML into dictionary
-        self.config = toml.loads(Path(config_file).read_text())
-
-        # CURR_SEM must always be provided, and since its a user provided path we make sure
+        # curr_sem must always be provided, and since its a user provided path we make sure
         # that ~ is expanded into user home directory; we also strip / from the end because
-        # we compare CURR_SEM with match directories to see if we should download
+        # we compare curr_sem with match directories to see if we should download
         # them (see __should_download( )) -- match directories are identified with
         # os.path.dirname( ) which strips the ending /
-        assert (
-            CURR_SEM in self.config
-        ), f"{CURR_SEM} must be specified in job and non-job modes"
-        self.config[CURR_SEM] = os.path.expanduser(self.config[CURR_SEM]).rstrip(os.sep)
+        if self.config.curr_sem is None:
+            raise MOSSError("curr_sem is a required configuration setting")
+        self.config.curr_sem = convert_user_specified_path(self.config.curr_sem)
 
-        run_nonjobmode = True
-        if JOB in self.config:
-            # Make sure to handle ~ in job folder
-            self.config[JOB] = os.path.expanduser(self.config[JOB]).rstrip(os.sep)
-
-            # Identified we're in job mode -- either JOB and CURR_SEM are provided or JOB, CURR_SEM,
-            # MATCH_FORMATTER, and CUSTOMS_FILE are provided; we check that JOB folder exists
-            assert len(self.config) == 2 or (
-                len(self.config) == 4
-                and MATCH_FORMATTER in self.config
-                and CUSTOMS_FILE in self.config
-            ), f"{JOB} has been specified, so only {JOB}, {CURR_SEM}, {CUSTOMS_FILE}, and {MATCH_FORMATTER} should be specified"
-
-            dir_exists(self.config[JOB])
-            run_nonjobmode = False
-
-            # This is a bit of a hack -- load_custom( ) assumes that both SUBMISSION_FILTER
-            # and MATCH_FORMATTER have entries in self.config. However, we know that
-            # SUBMISSION_FILTER should not be provided when running in non-job mode.
-            # Therefore, we set it to the default here, it won't be used regardless,
-            # but otherwise, load_custom( ) will crash -- this is akin to loading
-            # the necessary defaults in in the else case below
-            self.config[SUBMISSION_FILTER] = DEFAULTS[SUBMISSION_FILTER]
+        if self.config.job is not None:
+            self.__load_jobmode_config()
+            self.run_jobmode = True
         else:
-            for k, v in DEFAULTS.items():
-                # Load in defaults for optional settings if they weren't provided
-                if k not in self.config:
-                    self.config[k] = v
-
-                # If ASSN_DIRS was provided, make sure each of the paths have ~ expanded to user home
-                # directory; then make sure all those expanded paths exist
-                elif k == ASSN_DIRS:
-                    self.config[ASSN_DIRS] = [
-                        os.path.expanduser(p) for p in self.config[ASSN_DIRS]
-                    ]
-                    assert (
-                        self.config[CURR_SEM] not in self.config[ASSN_DIRS]
-                    ), f"{CURR_SEM} should not be in {ASSN_DIRS}"
-                    for p in self.config[ASSN_DIRS]:
-                        dir_exists(p)
-
-                # If BASE was provided, expand and make sure it exists
-                elif k == BASE:
-                    self.config[BASE] = os.path.expanduser(self.config[BASE])
-                    dir_exists(self.config[BASE])
-
-                # If OUTPUT was provided, expand -- but it doesn't have to exist
-                elif k == OUTPUT:
-                    self.config[OUTPUT] = os.path.expanduser(self.config[OUTPUT])
-
-            # In non-job mode, make sure OUTPUT exists if it DNE
-            check_and_make(self.config[OUTPUT])
-
-            # Make job folder here, b/c we're going to put log into that
-            # Need to get submission time before that (used in job folder name construction)
-            self.sub_time = datetime.now(timezone("US/Eastern"))
-            self.config[JOB] = self.__job_folder_name()
-            os.mkdir(self.config[JOB])
+            self.__load_nonjobmode_config()
+            self.run_jobmode = False
 
         # In both job and non-job modes, load up the custom functions
         self.__load_custom()
-        return run_nonjobmode
+        self.__setup_logger()
+
+        self.logger.debug(f"Loaded config:\n{self.config}")
+
+    def run(self):
+        """
+        Actually does the bulk work. It either will run a job or download
+        the results of a previous job.
+        """
+
+        if not self.run_jobmode:
+            self.logger.info("Constructing moss.pl command ...")
+            self.moss_cmd = ["perl", "moss.pl"]
+            self.__add_html_header()
+            self.__set_lang()
+            self.__set_other_moss_options()
+            self.__add_basefiles()
+            self.__add_assignment_directory_settings()
+            self.logger.info("moss.pl command constructed.")
+            self.__run_nonjob_mode()
+        else:
+            # Load url from URL file to do the download
+            urlfilepath = self.__get_url_filename()
+            file_exists(
+                urlfilepath,
+                f"URL file does not exist -- are you sure that {self.config.job} is a job folder?",
+            )
+            self.url = get_last_line_containing(
+                Path(urlfilepath).read_text(), URL_SEARCH_QUERY
+            )
+            if self.url is None:
+                raise MOSSError(f"Could not find URL in {urlfilepath}")
+            self.__download_results()
+
+    # Helper functions for loading configuration ...
+
+    def __load_jobmode_config(self):
+        """If user has specified we are in job mode, we use this to load config"""
+
+        self.config.job = convert_user_specified_path(self.config.job)
+        dir_exists(self.config.job)
+
+    def __should_collect(self, filepath):
+        """
+        Function that determines whether a file should be collected
+        into MOSS job it goes through a series of checks. This is
+        a crucial component of building the moss.pl command.
+
+        First, if the submission_filter denies the path, then
+        we don't do any further checks.
+
+        Second, the magic number file type (think Linux file command)
+        is checked to contain any of the source_file_types. This is
+        to protect against a student naming say x.cpp to x to hide
+        that it's a source file.
+
+        Third, the extension is checked. If it belongs to the set
+        of allowed extensions, the file is considered a candidate to
+        add. Otherwise, the file is rejected.
+
+        Lastly, the candidate is added if it is a text file with that extension
+        as source files are always considered text. This is to protect
+        against a student naming say a binary file or zip file as
+        x.cpp (probably by accident) which crashes MOSS.
+        """
+
+        if not self.submission_filter(filepath):
+            return False
+
+        filetype = magic.from_file(filepath)
+
+        # File is not one of the desired types
+        if any(ft in filetype for ft in self.config.source_file_types):
+            return True
+
+        # Remove .bak if it's there before doing the extension check
+        if filepath.endswith(GRADE_SUFFIX):
+            filepath = filepath[: -len(GRADE_SUFFIX)]
+        period = filepath.rfind(".")
+
+        # File has no extension or it's extension isn't in set -> False
+        if period < 0 or filepath[period:] not in self.config.source_extensions:
+            return False
+
+        # Collect file if it's text -- empty files will be ignored by 
+        # this as they have type 'empty'
+        return "text" in filetype
+
+    def __load_nonjobmode_config(self):
+        """If user has specified we are running a job, we use this to load config"""
+
+        self.config.assn_dirs = list(
+            map(convert_user_specified_path, self.config.assn_dirs)
+        )
+        if self.config.curr_sem in self.config.assn_dirs:
+            raise MOSSError(f"curr_sem should not be in assn_dirs")
+        map(dir_exists, self.config.assn_dirs)
+        self.config.base = convert_user_specified_path(self.config.base)
+        dir_exists(self.config.base)
+        self.config.output = convert_user_specified_path(self.config.output)
+        check_and_make(self.config.output)
+
+        # Make job folder here, b/c we're going to put log into that
+        # Need to get submission time before that (used in job folder name construction)
+        self.sub_time = datetime.now(timezone("US/Eastern"))
+        self.config.job = self.__job_folder_name()
+        os.mkdir(self.config.job)
+
+        for e in self.config.source_extensions:
+            if not e.startswith("."):
+                raise MOSSError(f"all extensions must start with a '.', {e} does not")
+
+    def __parse_toml(self):
+        """Load in config into dataclass object"""
+
+        try:
+            self.config = MOSSConfig(**toml.load(self.config_file))
+        except TypeError as e:
+            errmsg = str(e)
+            setting = errmsg[errmsg.index("'") : errmsg.rindex("'") + 1]
+            raise MOSSError(f"{setting} is not a valid configuration setting")
+
+    def __check_groups(self):
+        """Makes sure each of required groups is in user's groups"""
+
+        users_groups = {grp.getgrgid(id).gr_name for id in os.getgroups()}
+        for group in self.config.required_groups:
+            if group not in users_groups:
+                raise MOSSError(f"you do not belong to required group {group}")
 
     def __load_custom(self):
         """Loads custom functions from provided file into class attributes to be used later"""
 
-        if self.config[CUSTOMS_FILE] is not None:
+        if self.config.custom_file is not None:
             # CUSTOMS_FILE is user provided path so we again expand ~ to home dir and make sure
             # file exists and is a Python file
-            self.config[CUSTOMS_FILE] = os.path.expanduser(self.config[CUSTOMS_FILE])
-            file_exists(self.config[CUSTOMS_FILE])
-            assert self.config[CUSTOMS_FILE].endswith(
-                ".py"
-            ), f"{CUSTOMS_FILE} must be a Python file"
+            self.config.custom_file = convert_user_specified_path(
+                self.config.custom_file
+            )
+            file_exists(self.config.custom_file)
+            is_importable_python_file(self.config.custom_file)
 
             # Add python file to path and then import the module (assumed to be x if CUSTOM_PATH is PATH/TO/x.py)
-            sys.path.append(os.path.dirname(self.config[CUSTOMS_FILE]))
-            module_name = os.path.basename(self.config[CUSTOMS_FILE])[: -len(".py")]
+            sys.path.append(os.path.dirname(self.config.custom_file))
+            module_name = os.path.basename(self.config.custom_file)[: -len(".py")]
             custom_module = importlib.import_module(module_name)
 
             # Now, load the functions themselves using helper -- substitute defaults if the function can't be
             # found (remember this can be entered if only 1 of SUBMISSION_FILTER, MATCH_FORMATTER is specified)
             self.match_formatter = get_func_byname(
-                custom_module, self.config[MATCH_FORMATTER], replace_path_seps
+                custom_module, self.config.match_formatter, replace_path_seps
             )
             self.submission_filter = get_func_byname(
-                custom_module, self.config[SUBMISSION_FILTER], alwaystrue
+                custom_module, self.config.submission_filter, alwaystrue
             )
         else:
             self.match_formatter = replace_path_seps
@@ -421,8 +481,8 @@ class MOSSRunner:
     def __setup_logger(self):
         """Sets up logger - basically copy pasted from the Python logging cookbook"""
 
-        self.log = os.path.join(self.config[JOB], LOG_BASENAME)
-        self.logger = logging.getLogger("github_scraping")
+        self.log = os.path.join(self.config.job, LOG_BASENAME)
+        self.logger = logging.getLogger("moss")
         self.logger.setLevel(logging.DEBUG)
         fh = logging.FileHandler(self.log)
         fh.setLevel(logging.DEBUG)
@@ -446,7 +506,7 @@ class MOSSRunner:
             [
                 "-c",
                 '"'
-                + (f"{self.config[NAME]}: " if self.config[NAME] else "")
+                + (f"{self.config.name}: " if self.config.name else "")
                 + f"job submitted at {self.sub_time.strftime(NICE_TIME_FMT)} EST. "
                 + self.__get_exp_time_msg()
                 + '"',
@@ -454,20 +514,27 @@ class MOSSRunner:
         )
 
     def __set_lang(self):
-        """Sets language option to C++ -- have this as a function in case we want user to customize lang in future"""
+        """Sets language option in MOSS"""
 
-        self.moss_cmd.extend(["-l", "cc"])
+        self.moss_cmd.extend(["-l", self.config.language])
 
     def __set_other_moss_options(self):
-        """Sets m, n in MOSS -- have this as a function in case we want user to customize m, n in future"""
+        """Sets m, n in MOSS"""
 
-        self.moss_cmd.extend(["-n", str(MOSS_N), "-m", str(MOSS_M)])
+        self.moss_cmd.extend(
+            [
+                "-n",
+                str(self.config.submissions_to_collect),
+                "-m",
+                str(self.config.threshold_for_repeated_code),
+            ]
+        )
 
     def __add_basefiles(self):
         """Adds base files from base directory"""
 
-        if self.config[BASE] is not None:
-            for path in self.__collect_files(self.config[BASE], CPP_FILES):
+        if self.config.base is not None:
+            for path in self.__collect_files(self.config.base):
                 self.moss_cmd.extend(["-b", path])
 
     def __add_assignment_directory_settings(self):
@@ -483,7 +550,7 @@ class MOSSRunner:
         self.moss_cmd.append("-d")
 
         # For each assignment directory (inc. CURR_SEM) add files from it
-        for ad in [self.config[CURR_SEM]] + self.config[ASSN_DIRS]:
+        for ad in [self.config.curr_sem] + self.config.assn_dirs:
             for sub in get_submissions(ad):
                 self.__add_sub_files(sub)
 
@@ -498,7 +565,7 @@ class MOSSRunner:
         if not os.path.isdir(os.path.join(sub_dir, GRADE_TA_EDIT_DIR)):
             # If no grading folder inside, collect C++ files from this directory
             # (see __collect_files for filtering) and add to command
-            self.moss_cmd.extend(self.__collect_files(sub_dir, CPP_FILES))
+            self.moss_cmd.extend(self.__collect_files(sub_dir))
         else:
             # Temporary directory where we transfer grading/ files out of and
             # rename to be .h, .cpp instead of .h.bak, .cpp.bak respectively
@@ -511,7 +578,7 @@ class MOSSRunner:
             os.mkdir(temp_dir)
 
             # For each submission file found in grading/
-            for path in self.__collect_files(sub_dir, GRADE_CPP_FILES):
+            for path in self.__collect_files(sub_dir, grade_mode=True):
                 # Identify path that .bak will be copied to (e.g. test/x.cpp.bak -> test/temp/x.cpp),
                 # then copy there and add path to copied file to MOSS command
                 copied_bak = os.path.join(
@@ -519,17 +586,6 @@ class MOSSRunner:
                 )
                 shutil.copy2(path, copied_bak)
                 self.moss_cmd.append(copied_bak)
-
-    class __Match:
-        """Represents a MOSS match"""
-
-        def __init__(self):
-            self.url = None
-            self.person1 = None
-            self.person2 = None
-            self.person1_perc = None
-            self.person2_perc = None
-            self.lines_matched = None
 
     # __Match helper functions ...
 
@@ -560,8 +616,8 @@ class MOSSRunner:
         """Determines whether a match should be downloaded based on 1 of match participants being from directory of current sem"""
 
         return (
-            os.path.dirname(match.person1) == self.config[CURR_SEM]
-            or os.path.dirname(match.person2) == self.config[CURR_SEM]
+            os.path.dirname(match.person1) == self.config.curr_sem
+            or os.path.dirname(match.person2) == self.config.curr_sem
         )
 
     # Helper functions for running job ...
@@ -573,7 +629,7 @@ class MOSSRunner:
 
         # Save a copy of the config file user provided (in case they lose it)
         shutil.copy2(
-            self.config_file, os.path.join(self.config[JOB], CONFIG_COPY_BASENAME)
+            self.config_file, os.path.join(self.config.job, CONFIG_COPY_BASENAME)
         )
 
         # Run MOSS job and report how long it took
@@ -587,9 +643,10 @@ class MOSSRunner:
         # of the moss.pl commend -- we don't want to read over the whole log file
         # for which that output was appended to by __run_and_monitor
         self.url = get_last_line_containing(output, URL_SEARCH_QUERY)
-        assert (
-            self.url is not None
-        ), f"Error occurred with this MOSS job - see {self.log} for details. If there is nothing there that is obvious, most likely the MOSS job timed out waiting for server response, so come back and try again later."
+        if self.url is None:
+            raise MOSSError(
+                f"Error occurred with this MOSS job - see {self.log} for details. If there is nothing there that is obvious, most likely the MOSS job timed out waiting for server response, so come back and try again later."
+            )
         self.logger.info("Success! Results at " + self.url)
         self.logger.debug(self.__get_exp_time_msg())
 
@@ -598,7 +655,7 @@ class MOSSRunner:
             url_file.write(f"{self.url}\n{self.__get_exp_time_msg()}\n")
 
         # If user wanted to download -- download
-        if self.config[DOWNLOAD]:
+        if self.config.download:
             self.__download_results()
 
     def __download_results(self):
@@ -608,7 +665,7 @@ class MOSSRunner:
         """
 
         # Make folder where matches will be
-        results_path = os.path.join(self.config[JOB], "results")
+        results_path = os.path.join(self.config.job, "results")
         check_and_make(results_path)
 
         # This is the path where GET downloads it to
@@ -652,16 +709,16 @@ class MOSSRunner:
         """Gets job directory path"""
 
         basename = (
-            f"{self.config[NAME]}_" if self.config[NAME] is not None else ""
+            f"{self.config.name}_" if self.config.name is not None else ""
         ) + f'job_{self.sub_time.strftime("%Y%m%d_%H%M%S")}'
-        return os.path.join(self.config[OUTPUT], basename)
+        return os.path.join(self.config.output, basename)
 
     def __cleanup_moss_folders(self):
         """Removes the temporary moss folders created in submissions if grade was utility used"""
 
         # For each of the assignment directories, go through submissions that we would
         # have looked into and remove temporary directories if they were created
-        for ad in [self.config[CURR_SEM]] + self.config[ASSN_DIRS]:
+        for ad in [self.config.curr_sem] + self.config.assn_dirs:
             for sub in get_submissions(ad):
                 temp_dir = os.path.join(sub, TEMP_MOSS_DIR)
                 if os.path.isdir(temp_dir):
@@ -681,7 +738,7 @@ class MOSSRunner:
 
         if line_number % 3 == 0:
             # Beginning of match data, so we create a __Match
-            self.matches.append(MOSSRunner.__Match())
+            self.matches.append(MOSSMatch())
 
             # Parse the line -- this is just hardcoded to parse the index HTML
             # files from Stanford... nothing really clever here, just trying to get
@@ -722,7 +779,9 @@ class MOSSRunner:
         """Orders matches in descending order of lines matched and writes to TSV file"""
 
         with open(
-            os.path.join(self.config[JOB], MATCHES_BASENAME), mode="w+", encoding="utf-8"
+            os.path.join(self.config.job, MATCHES_BASENAME),
+            mode="w+",
+            encoding="utf-8",
         ) as lf:
             lines = [
                 self.__match_toline(m)
@@ -817,40 +876,35 @@ class MOSSRunner:
     def __get_exp_time_msg(self):
         """Gets a message on expiration time of a MOSS job submitted at submission time"""
 
-        return f"Estimated expiration time: {(self.sub_time + timedelta(days=MOSS_EXPIRATION_TIME)).strftime(NICE_TIME_FMT)} EST"
+        return f"Estimated expiration time: {(self.sub_time + timedelta(days=MOSS_EXPIRATION_TIME_DAYS)).strftime(NICE_TIME_FMT)} EST"
 
-    def __collect_files(self, folder, extensions):
+    def __collect_files(self, folder, grade_mode=False):
         """
-        Collects all files in a folder that have one of a set of
-        extensions. Handles when folder is not accessed, in which
-        case None is returned
+        Collects all files in a submission folder that should be included in a MOSS job.
+        Handles possibility of folder not being accessible and when grade
+        utility has been run on the submission folder
         """
 
+        files = list()
         try:
-            # List of file paths to be returned
-            files = list()
             for e in os.scandir(folder):
-                # Skip directories and symlinks and files with no extension
-                if not e.is_file() or "." not in e.name:
+                # Skip subdirs and symlinks always, if collecting files in
+                # a grade-affected folder, skip files that don't end with grade suffix
+                if not e.is_file() or (
+                    grade_mode and not e.name.endswith(GRADE_SUFFIX)
+                ):
                     continue
 
-                # Check if file's extension is in extensions and if the path to the file
-                # passes user provided submission filter. Note to identify the extension
-                # we get everything after the . as the extension, this is to account for
-                # the grading folder which ends files with .h.bak and the extensions
-                # we look for are .h.bak and .cpp.bak (rindex would give .bak).
-                if e.name[e.name.index(".") :] in extensions and self.submission_filter(
-                    e.path
-                ):
+                # Only keep files we deemed necessary to collect
+                if self.__should_collect(e.path):
                     files.append(e.path)
-            return files
-        except PermissionError as e:
+        except PermissionError:
             # Some folders on Tufts grading server are locked to certain people, we just skip
             # them but warn the user
             self.logger.warning(
                 f"Could not collect files from {folder} -- permission denied"
             )
-            return []
+        return files
 
     def __run_and_monitor(self, cmd):
         """Runs a command in a child process, times it, and logs its stderr + stdout to log file"""
@@ -868,7 +922,7 @@ class MOSSRunner:
     def __get_url_filename(self):
         """Gets URL filepath in a job"""
 
-        return os.path.join(self.config[JOB], URL_BASENAME)
+        return os.path.join(self.config.job, URL_BASENAME)
 
     def __download(self, url, output_fp):
         """Downloads URL into output file"""
@@ -884,5 +938,29 @@ class MOSSRunner:
             )
 
 
+def main():
+    runner = None
+    try:
+        runner = MOSSRunner(get_config_file())
+    except MOSSError as e:
+        print(f"moss error in setup: {e}", file=sys.stderr)
+    except Exception as e:
+        print(f"unexpected error in setup: {e}", file=sys.stderr)
+
+    if runner is not None:
+        try:
+            runner.run()
+        except MOSSError as e:
+            print(
+                f"moss error: {e}\nCheck {runner.log} for more details.",
+                file=sys.stderr,
+            )
+        except Exception as e:
+            print(
+                f"unexpected error: {e}\nCheck {runner.log} for more details.\nmoss traceback:\n{traceback.format_exc()}",
+                file=sys.stderr,
+            )
+
+
 if __name__ == "__main__":
-    MOSSRunner(get_config_file())
+    main()
