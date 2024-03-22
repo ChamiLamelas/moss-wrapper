@@ -6,7 +6,7 @@ This repository is for `moss` a wrapper of `moss.pl`. `moss.pl` is the [Measure 
 * It enables use of MOSS with the Tufts Computer Science Department `provide` submission and `grade` frameworks.
 * It provides a more user friendly interface than `moss.pl` in terms of specifying base files and even the files to upload.
 * It enables organized downloading of MOSS results in the interest of maintaining a record of plagiarism cases (and not relying on the MOSS servers being stable).
-* It offers protection against someone uploading files that could break MOSS (e.g. a non source file named like a source file, e.g. a zip named `x.cpp`).
+* It offers protection against someone uploading files that could break MOSS (e.g. a non source file named like a source file, e.g. a zip named `x.cpp`). `moss.pl` does not have this protection, and neither do the MOSS wrappers I've used in the past (e.g. the [C# GUI one](https://github.com/shanemay/MossApp)).
 
 MOSS can be used to detect plagiarism in students' code. [This somewhat humorous article](https://github.com/genchang1234/How-to-cheat-in-computer-science-101) describes some types of plagiarism that can be detected. MOSS has influenced other plagiarism detection software such as the [software used by Gradescope](https://www.cs.washington.edu/lab/course-resources/gradescope). However, one benefit using MOSS outside of Gradescope is that you can incorporate previous semesters as well as scraped GitHub reposchangeitories into the job. 
 
