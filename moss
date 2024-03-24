@@ -12,7 +12,7 @@ results server(s) go down.
 This script should have execute permissions if you wish to run it with ./moss. However,
 it can just be run with python moss.
 
-Version: 3.22.2024
+Version: 3.24.2024
 
 See https://github.com/ChamiLamelas/moss-wrapper for the most up to date version and more information.
 
@@ -369,7 +369,8 @@ class MOSSRunner:
         )
         if self.config.curr_sem in self.config.assn_dirs:
             raise MOSSError(f"curr_sem should not be in assn_dirs")
-        map(dir_exists, self.config.assn_dirs)
+        for d in self.config.assn_dirs:
+            dir_exists(d)
         self.config.base = convert_user_specified_path(self.config.base)
         dir_exists(self.config.base)
         self.config.output = convert_user_specified_path(self.config.output)
