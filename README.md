@@ -382,6 +382,9 @@ This script used to output things somewhat differently. The most important diffe
 
 ## Changelog
 
+### 3.24.2024
+* Patch bug related to `map`
+
 ### 3.22.2024
 * Clean up configuration by loading TOML into a dataclass instead of a dictionary and then separately handling defaults. 
 * Files that are collected to upload are now also checked to be text based on magic number in addition to extension to avoid the `X.java` bug.
