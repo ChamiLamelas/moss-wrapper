@@ -12,7 +12,7 @@ results server(s) go down.
 This script should have execute permissions if you wish to run it with ./moss. However,
 it can just be run with python moss.
 
-Version: 3.24.2024
+Version: 4.12.2024
 
 See https://github.com/ChamiLamelas/moss-wrapper for the most up to date version and more information.
 
@@ -40,6 +40,8 @@ import magic
 from dataclasses import dataclass, field, fields
 from typing import List
 import traceback
+import stat
+import pwd
 
 # toml module (from PyPI) is used in place of tomllib (Python standard library) as tomllib
 # will only be available in Python 3.11.x and Tufts server runs Python 3.9.2.
@@ -152,6 +154,21 @@ URL_SEARCH_QUERY = "moss.stanford.edu"
 
 
 # Non instance method helpers -- more general functions
+
+
+def get_permissions_info(path):
+    """
+    Get permissions information (file permissions,
+    owner name, group name) on a file.
+    """
+
+    file_stats = os.stat(path)
+    file_permissions = stat.filemode(file_stats.st_mode)
+    owner_id = file_stats.st_uid
+    group_id = file_stats.st_gid
+    owner_name = pwd.getpwuid(owner_id).pw_name
+    group_name = grp.getgrgid(group_id).gr_name
+    return file_permissions, owner_name, group_name
 
 
 def is_importable_python_file(filepath):
@@ -328,7 +345,7 @@ class MOSSRunner:
         """
 
         if not self.run_jobmode:
-            # Handy to print this so user can cd into it 
+            # Handy to print this so user can cd into it
             self.logger.info(f"Job folder is {self.config.job}")
             self.logger.info("Constructing moss.pl command ...")
             self.moss_cmd = ["perl", "moss.pl"]
@@ -498,7 +515,7 @@ class MOSSRunner:
         if period < 0 or filepath[period:] not in self.config.source_extensions:
             return False
 
-        # Collect file if it's text -- empty files will be ignored by 
+        # Collect file if it's text -- empty files will be ignored by
         # this as they have type 'empty'
         return "text" in filetype
 
@@ -888,25 +905,41 @@ class MOSSRunner:
         utility has been run on the submission folder
         """
 
-        files = list()
-        try:
-            for e in os.scandir(folder):
-                # Skip subdirs and symlinks always, if collecting files in
-                # a grade-affected folder, skip files that don't end with grade suffix
-                if not e.is_file() or (
-                    grade_mode and not e.name.endswith(GRADE_SUFFIX)
-                ):
-                    continue
-
-                # Only keep files we deemed necessary to collect
-                if self.__should_collect(e.path):
-                    files.append(e.path)
-        except PermissionError:
+        if not os.access(folder, os.R_OK):
             # Some folders on Tufts grading server are locked to certain people, we just skip
             # them but warn the user
             self.logger.warning(
                 f"Could not collect files from {folder} -- permission denied"
             )
+            file_perms, owner, group = get_permissions_info(folder)
+            self.logger.warning(
+                f"permissions: {file_perms} owner: {owner} group: {group}"
+            )
+            return []
+
+        files = list()
+        for e in os.scandir(folder):
+            # Skip subdirs and symlinks always, if collecting files in
+            # a grade-affected folder, skip files that don't end with grade suffix
+            if not e.is_file() or (grade_mode and not e.name.endswith(GRADE_SUFFIX)):
+                continue
+
+            if not os.access(e.path, os.R_OK):
+                # Some files on Tufts grading server are locked to certain people, we just skip
+                # them but warn the user
+                self.logger.warning(
+                    f"Could not collect file {e.path} -- permission denied"
+                )
+                file_perms, owner, group = get_permissions_info(e.path)
+                self.logger.warning(
+                    f"permissions: {file_perms} owner: {owner} group: {group}"
+                )
+                continue
+
+            # Only keep files we deemed necessary to collect
+            if self.__should_collect(e.path):
+                files.append(e.path)
+
         return files
 
     def __run_and_monitor(self, cmd):
