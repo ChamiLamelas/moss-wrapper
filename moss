@@ -12,7 +12,7 @@ results server(s) go down.
 This script should have execute permissions if you wish to run it with ./moss. However,
 it can just be run with python moss.
 
-Version: 4.12.2024
+Version: 5.3.2024
 
 See https://github.com/ChamiLamelas/moss-wrapper for the most up to date version and more information.
 
@@ -166,8 +166,20 @@ def get_permissions_info(path):
     file_permissions = stat.filemode(file_stats.st_mode)
     owner_id = file_stats.st_uid
     group_id = file_stats.st_gid
-    owner_name = pwd.getpwuid(owner_id).pw_name
-    group_name = grp.getgrgid(group_id).gr_name
+
+    # A KeyError is raised in the event you cannot get a username
+    # from a UID on Linux (same for group name from GID). It looks
+    # like EECS staff may remove UTLNs from files on Halligan because
+    # if you look at super old directories, you will see that the user
+    # names (UTLNs) have been replaced with UIDs.
+    try:
+        owner_name = pwd.getpwuid(owner_id).pw_name
+    except KeyError:
+        owner_name = owner_id 
+    try:
+        group_name = grp.getgrgid(group_id).gr_name
+    except KeyError:
+        group_name = group_id 
     return file_permissions, owner_name, group_name
 
 
