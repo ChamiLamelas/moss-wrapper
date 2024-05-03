@@ -382,6 +382,9 @@ This script used to output things somewhat differently. The most important diffe
 
 ## Changelog
 
+### 5.3.2024
+* Update `moss` permissions information accessing to handle the case when a group or user name cannot be retrieved from a UID/GID. 
+
 ### 4.12.2024
 * Cleanup permission handling. In particular, we now do explicit access checks for both the directory and the files inside. If the directory can't be accessed, that's one warning. If a file within the directory can't be accessed, that's another warning. All files within an accessible directory will still be collected now (previously only a subset would be). Furthermore, we add additional permissions information so one can see why a file can't be accessed (i.e. show the perms, owner, and group).
 
